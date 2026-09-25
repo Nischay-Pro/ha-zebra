@@ -1,0 +1,90 @@
+{
+  "title": "Zebra Printer",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to a Zebra printer",
+        "description": "Enter the printer's address and raw printing port.",
+        "data": {
+          "host": "Host",
+          "port": "Port"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Cannot read Zebra settings from this printer"
+    },
+    "abort": {
+      "already_configured": "This printer is already configured"
+    }
+  },
+  "entity": {
+    "sensor": {
+      "operating_status": {
+        "name": "Operating status",
+        "state_attributes": {
+          "paused": {
+            "name": "Paused"
+          },
+          "errors": {
+            "name": "Errors"
+          },
+          "warnings": {
+            "name": "Warnings"
+          }
+        }
+      },
+      "total_labels": {
+        "name": "Lifetime labels"
+      },
+      "resettable_labels_1": {
+        "name": "Labels since reset 1"
+      },
+      "resettable_labels_2": {
+        "name": "Labels since reset 2"
+      },
+      "total_print_length": {
+        "name": "Lifetime media fed"
+      },
+      "firmware": {
+        "name": "Firmware"
+      },
+      "printhead_temperature": {
+        "name": "Printhead temperature"
+      },
+      "ribbon_inserted": {
+        "name": "Ribbon cartridge"
+      },
+      "paper_supply": {
+        "name": "Paper supply"
+      }
+    },
+    "select": {
+      "print_method": {
+        "name": "Print method"
+      }
+    },
+    "button": {
+      "reset_counter_1": {
+        "name": "Reset label counter 1"
+      },
+      "reset_counter_2": {
+        "name": "Reset label counter 2"
+      }
+    }
+  },
+  "exceptions": {
+    "counter_reset_failed": {
+      "message": "Could not reset the label counter. Check the printer connection and SGD write access."
+    },
+    "print_method_change_failed": {
+      "message": "Could not change the print method. Check the printer connection and SGD write access."
+    },
+    "ribbon_required": {
+      "message": "Load a ribbon cartridge before selecting Thermal Transfer."
+    },
+    "unsupported_print_method": {
+      "message": "The selected print method is not supported."
+    }
+  }
+}
