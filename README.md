@@ -42,14 +42,17 @@ resettable counter.
 
 ### HACS
 
-This repository must be published on GitHub before it can be installed through
-HACS. It is not currently a default HACS repository. Once published, the badge
-above opens its page in HACS, including for a custom repository.
+1. In HACS, search for **Zebra Printer** and install it.
+2. Restart Home Assistant.
+
+If **Zebra Printer** does not appear in the search results, add the repository
+as a custom repository:
 
 1. In HACS, open the menu and choose **Custom repositories**.
 2. Enter `https://github.com/Nischay-Pro/ha-zebra` and choose
    **Integration** as the category.
-3. Download **Zebra Printer** and restart Home Assistant.
+3. Add the repository, then search for **Zebra Printer** and install it.
+4. Restart Home Assistant.
 
 ### Manual
 
