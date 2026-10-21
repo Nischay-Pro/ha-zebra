@@ -4,7 +4,7 @@
     "step": {
       "user": {
         "title": "Connect to a Zebra printer",
-        "description": "No Zebra printer was discovered. Enter its address and raw printing port, or check that UDP discovery traffic is allowed on the local network.",
+        "description": "Choose a discovered printer, or enter its address and raw printing port manually. Discovery requires local UDP broadcast traffic.",
         "data": {
           "host": "Host",
           "port": "Port"
@@ -20,7 +20,9 @@
     },
     "error": {
       "cannot_connect": "Cannot read Zebra settings from this printer",
-      "no_printers_found": "No Zebra printers were discovered. Enter the printer address manually."
+      "no_printers_found": "No Zebra printers replied to discovery. Enter the printer address manually or check local UDP broadcast access.",
+      "all_printers_configured": "All discovered Zebra printers are already configured in Home Assistant.",
+      "no_compatible_printers_found": "Devices replied to discovery, but none could be verified as compatible Zebra printers. Enter a printer address manually."
     },
     "abort": {
       "already_configured": "This printer is already configured"

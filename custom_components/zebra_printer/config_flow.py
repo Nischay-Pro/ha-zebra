@@ -30,25 +30,31 @@ class ZebraPrinterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 str(entry.data.get(CONF_HOST, "")).casefold()
                 for entry in self._async_current_entries()
             }
-            discovered_hosts = [
+            new_discovered_hosts = [
                 host
                 for host in discovered_hosts
                 if host.casefold() not in configured_hosts
             ]
             models = await asyncio.gather(
-                *(self._async_discovered_model(host) for host in discovered_hosts)
+                *(self._async_discovered_model(host) for host in new_discovered_hosts)
             )
             self._discovered_hosts = {
                 host: model
-                for host, model in zip(discovered_hosts, models)
+                for host, model in zip(new_discovered_hosts, models)
                 if model is not None
             }
             if self._discovered_hosts:
                 return await self.async_step_discovered()
+            if not discovered_hosts:
+                discovery_error = "no_printers_found"
+            elif not new_discovered_hosts:
+                discovery_error = "all_printers_configured"
+            else:
+                discovery_error = "no_compatible_printers_found"
             return self.async_show_form(
                 step_id="user",
                 data_schema=self._manual_schema(),
-                errors={"base": "no_printers_found"},
+                errors={"base": discovery_error},
             )
 
         if user_input is None:
