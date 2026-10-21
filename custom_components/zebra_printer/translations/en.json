@@ -4,15 +4,23 @@
     "step": {
       "user": {
         "title": "Connect to a Zebra printer",
-        "description": "Enter the printer's address and raw printing port.",
+        "description": "No Zebra printer was discovered. Enter its address and raw printing port, or check that UDP discovery traffic is allowed on the local network.",
         "data": {
           "host": "Host",
           "port": "Port"
         }
+      },
+      "discovered": {
+        "title": "Zebra printers found",
+        "description": "Choose a printer to add, or choose manual setup.",
+        "data": {
+          "host": "Printer"
+        }
       }
     },
     "error": {
-      "cannot_connect": "Cannot read Zebra settings from this printer"
+      "cannot_connect": "Cannot read Zebra settings from this printer",
+      "no_printers_found": "No Zebra printers were discovered. Enter the printer address manually."
     },
     "abort": {
       "already_configured": "This printer is already configured"

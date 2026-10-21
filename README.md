@@ -31,6 +31,8 @@ using Zebra Set-Get-Do (SGD) commands over the printer's raw TCP print port.
   reset either resettable label counter when the printer reports it.
 - **Home Assistant device:** one device per configured printer, with a link to
   its web configuration page and included icon and logo assets.
+- **Automatic discovery:** searches for Zebra printers when the setup flow
+  opens, with manual host and port entry as a fallback.
 - **Local polling:** reads the printer every 60 seconds; no cloud account is
   required.
 
@@ -63,9 +65,12 @@ restart Home Assistant.
 ## 2. Getting started
 
 Go to **Settings → Devices & services → Add integration → Zebra Printer**.
-Enter the printer's hostname or IP address and its raw TCP print port (usually
-`9100`). The setup flow checks that the printer responds to the required SGD
-commands before creating the device.
+The setup flow searches enabled Home Assistant IPv4 networks using Zebra's UDP
+network-discovery service on port 4201. Select a verified printer from the
+results, or choose manual setup and enter its hostname or IP address and raw
+TCP print port (usually `9100`). The flow checks the printer's SGD
+response before creating the device. Discovery requires local broadcast
+traffic between Home Assistant and the printer.
 
 Open the new Zebra device page to see its entities. The integration supplies
 local PNG branding for Home Assistant versions that support it. The device page
