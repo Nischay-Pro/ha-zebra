@@ -10,6 +10,7 @@ from datetime import timedelta
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
@@ -39,6 +40,7 @@ from .services import async_setup_services
 
 _LOGGER = logging.getLogger(__name__)
 PLATFORMS = [Platform.SENSOR, Platform.SELECT, Platform.BUTTON, Platform.NUMBER]
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 PRINTHEAD_USAGE_VARIABLE = "device.printhead.odometer"
 PRINT_SETTINGS_VARIABLES = {

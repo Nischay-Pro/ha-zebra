@@ -140,9 +140,8 @@ sends one label:
 
 ```yaml
 action: zebra_printer.print
-target:
-  device_id: YOUR_ZEBRA_DEVICE_ID
 data:
+  device_id: YOUR_ZEBRA_DEVICE_ID
   zpl: |-
     ^XA
     ^FO40,40^A0N,40,40^FDHello from Home Assistant^FS
@@ -182,9 +181,8 @@ The `zebra_printer.set_media_roll` action is also available for automations:
 
 ```yaml
 action: zebra_printer.set_media_roll
-target:
-  device_id: YOUR_ZEBRA_DEVICE_ID
 data:
+  device_id: YOUR_ZEBRA_DEVICE_ID
   roll_length_inches: 1000
 ```
 

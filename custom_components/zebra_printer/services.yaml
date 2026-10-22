@@ -1,8 +1,10 @@
 print:
-  target:
-    device:
-      integration: zebra_printer
   fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: zebra_printer
     zpl:
       required: true
       example: |-
@@ -13,10 +15,12 @@ print:
         text:
           multiline: true
 set_media_roll:
-  target:
-    device:
-      integration: zebra_printer
   fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: zebra_printer
     roll_length_inches:
       required: true
       example: 1000

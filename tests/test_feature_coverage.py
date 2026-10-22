@@ -146,6 +146,10 @@ device_registry.async_get = lambda hass: hass.device_registry
 config_validation = _module("homeassistant.helpers.config_validation")
 helpers.config_validation = config_validation
 config_validation.string = str
+config_validation.config_entry_only_config_schema = lambda domain: (
+    "config_entry_only_config_schema",
+    domain,
+)
 config_validation.positive_float = probatio.All(
     probatio.Coerce(float), probatio.NonNegative()
 )
@@ -256,6 +260,10 @@ class FeatureCoverageSmokeTest(unittest.TestCase):
         self.assertTrue(number_module.ZebraPrintTone)
         self.assertTrue(services_module.SERVICE_PRINT)
         self.assertTrue(integration_module.PLATFORMS)
+        self.assertEqual(
+            integration_module.CONFIG_SCHEMA,
+            ("config_entry_only_config_schema", integration_module.DOMAIN),
+        )
 class _SgdClient:
     def __init__(self, values=None, errors=None):
         self.values = values or {}

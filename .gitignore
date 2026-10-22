@@ -8,3 +8,4 @@ __pycache__/
 known_hosts
 secrets.yaml
 *.log
+.coverage
