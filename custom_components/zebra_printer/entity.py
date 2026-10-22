@@ -19,8 +19,9 @@ class ZebraEntity(CoordinatorEntity[ZebraCoordinator]):
         super().__init__(coordinator)
         self._attr_unique_id = f"{entry.entry_id}_{key}"
         model = str(coordinator.data.get("model") or "Printer")
+        printer_identity = entry.unique_id or entry.data["host"]
         self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.data["host"])},
+            identifiers={(DOMAIN, printer_identity)},
             name=f"Zebra {model}",
             manufacturer="Zebra Technologies",
             model=model,

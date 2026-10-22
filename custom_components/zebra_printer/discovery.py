@@ -18,25 +18,56 @@ _DISCOVERY_INTERVAL = 0.1
 _DISCOVERY_TIMEOUT = 1.5
 
 
+class ZebraDiscoveryError(HomeAssistantError):
+    """Base error with a translation key for discovery setup feedback."""
+
+    translation_key = "discovery_transport_error"
+
+
+class ZebraDiscoveryNetworkError(ZebraDiscoveryError):
+    """Home Assistant could not enumerate network adapters."""
+
+    translation_key = "discovery_network_error"
+
+
+class ZebraDiscoveryNoInterfacesError(ZebraDiscoveryError):
+    """Home Assistant has no eligible IPv4 broadcast interface."""
+
+    translation_key = "discovery_no_interfaces"
+
+
+class ZebraDiscoveryTransportError(ZebraDiscoveryError):
+    """Home Assistant could not bind or send discovery probes."""
+
+    translation_key = "discovery_transport_error"
+
+
 class _ZebraDiscoveryProtocol(asyncio.DatagramProtocol):
     """Collect valid Zebra discovery replies."""
 
     def __init__(self) -> None:
         """Initialize the discovery response set."""
         self.printers: set[str] = set()
+        self.transport_errors: list[Exception] = []
 
     def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
         """Record the sender of a Zebra discovery response."""
         if data.startswith(_DISCOVERY_RESPONSE_PREFIX):
             self.printers.add(addr[0])
 
+    def error_received(self, exc: Exception) -> None:
+        """Record asynchronous UDP errors reported by the operating system."""
+        self.transport_errors.append(exc)
+
 
 async def async_discover_printers(hass: HomeAssistant) -> list[str]:
     """Broadcast Zebra discovery probes on enabled Home Assistant networks."""
     try:
         adapters = await network.async_get_adapters(hass)
-    except (HomeAssistantError, OSError):
-        return []
+    except (HomeAssistantError, OSError) as err:
+        raise ZebraDiscoveryNetworkError(
+            "Home Assistant could not read available network adapters"
+        ) from err
 
     interfaces: set[tuple[str, str]] = set()
     for adapter in adapters:
@@ -62,11 +93,14 @@ async def async_discover_printers(hass: HomeAssistant) -> list[str]:
             )
 
     if not interfaces:
-        return []
+        raise ZebraDiscoveryNoInterfacesError(
+            "No enabled IPv4 broadcast interface is available for Zebra discovery"
+        )
 
     loop = asyncio.get_running_loop()
     transports: list[tuple[asyncio.DatagramTransport, str]] = []
     protocols: list[_ZebraDiscoveryProtocol] = []
+    bind_errors: list[OSError] = []
     try:
         for local_address, broadcast_address in sorted(interfaces):
             try:
@@ -75,14 +109,19 @@ async def async_discover_printers(hass: HomeAssistant) -> list[str]:
                     local_addr=(local_address, 0),
                     allow_broadcast=True,
                 )
-            except OSError:
+            except OSError as err:
+                bind_errors.append(err)
                 continue
             transports.append((transport, broadcast_address))
             protocols.append(protocol)
 
         if not transports:
-            return []
+            raise ZebraDiscoveryTransportError(
+                "Home Assistant could not bind a UDP socket on any eligible interface"
+            ) from (bind_errors[-1] if bind_errors else None)
 
+        send_errors: list[OSError] = []
+        sent_on_interface = False
         for attempt in range(_DISCOVERY_ATTEMPTS):
             for transport, broadcast_address in transports:
                 try:
@@ -90,15 +129,41 @@ async def async_discover_printers(hass: HomeAssistant) -> list[str]:
                         _DISCOVERY_REQUEST,
                         (broadcast_address, DISCOVERY_PORT),
                     )
-                except OSError:
-                    continue
+                    sent_on_interface = True
+                except OSError as err:
+                    send_errors.append(err)
             if attempt < _DISCOVERY_ATTEMPTS - 1:
                 await asyncio.sleep(_DISCOVERY_INTERVAL)
 
         await asyncio.sleep(_DISCOVERY_TIMEOUT)
-        return sorted(
+        printers = sorted(
             {host for protocol in protocols for host in protocol.printers}
         )
+        if printers:
+            return printers
+        protocol_errors = [
+            error
+            for protocol in protocols
+            for error in protocol.transport_errors
+        ]
+        transport_error = (
+            protocol_errors[-1]
+            if protocol_errors
+            else send_errors[-1]
+            if send_errors
+            else bind_errors[-1]
+            if bind_errors
+            else None
+        )
+        if not sent_on_interface:
+            raise ZebraDiscoveryTransportError(
+                "Home Assistant could not send UDP discovery probes"
+            ) from transport_error
+        if bind_errors or send_errors or protocol_errors:
+            raise ZebraDiscoveryTransportError(
+                "Zebra discovery could not use every eligible network interface"
+            ) from transport_error
+        return []
     finally:
         for transport, _ in transports:
             transport.close()

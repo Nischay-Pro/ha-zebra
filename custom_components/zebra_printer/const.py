@@ -8,6 +8,11 @@ DOMAIN = "zebra_printer"
 DEFAULT_PORT = 9100
 POLL_SECONDS = 60
 
+# Persisted config-entry options for the user-configured media-roll estimate.
+CONF_MEDIA_ROLL_LENGTH_INCHES = "media_roll_length_inches"
+CONF_MEDIA_ROLL_BASELINE_INCHES = "media_roll_baseline_inches"
+CONF_MEDIA_ROLL_REMAINING_INCHES = "media_roll_remaining_inches"
+
 DIRECT_THERMAL = "Direct Thermal"
 THERMAL_TRANSFER = "Thermal Transfer"
 METHOD_VALUES = {
@@ -97,3 +102,36 @@ def parse_operating_status(value: str | None) -> PrinterStatus | None:
 
     state = errors[0] if errors else "Paused" if paused else warnings[0] if warnings else "Ready"
     return PrinterStatus(state, paused, tuple(errors), tuple(warnings), value)
+
+RIBBON_CARTRIDGE_FEATURE = "device.feature.ribbon_cartridge"
+RIBBON_INSERTED_VARIABLE = "ribbon.cartridge.inserted"
+RIBBON_REMAINING_VARIABLE = "ribbon.cartridge.length_remaining"
+RIBBON_WARNING_VARIABLE = "ribbon.ribbon_low.warning"
+RIBBON_LOW_WARNING_CHOICES = {
+    "Off": "off",
+    "5%": "5",
+    "10%": "10",
+    "15%": "15",
+    "25%": "25",
+    "50%": "50",
+    "75%": "75",
+    "100%": "100",
+}
+RIBBON_LOW_WARNING_OPTIONS_BY_VALUE = {
+    value: option for option, value in RIBBON_LOW_WARNING_CHOICES.items()
+}
+
+
+def is_ribbon_cartridge_capable(status: str | None) -> bool:
+    """Return whether SGD reports ribbon-cartridge support."""
+    return bool(status and status.strip().casefold() in {"present", "not present"})
+
+
+def parse_ribbon_cartridge_inserted(status: str | None) -> bool | None:
+    """Return whether SGD reports an inserted ribbon cartridge."""
+    value = status.strip().casefold() if status else ""
+    if value == "yes":
+        return True
+    if value == "no":
+        return False
+    return None

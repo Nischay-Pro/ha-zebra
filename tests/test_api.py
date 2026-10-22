@@ -4,6 +4,7 @@ import asyncio
 import importlib.util
 from pathlib import Path
 import unittest
+from unittest.mock import AsyncMock, patch
 
 
 API_PATH = Path(__file__).resolve().parents[1] / "custom_components" / "zebra_printer" / "api.py"
@@ -78,3 +79,101 @@ class ZebraClientTest(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class _FakeReader:
+    def __init__(self, *, first=b'"', rest=b'value"', read_error=None, rest_error=None):
+        self.first = first
+        self.rest = rest
+        self.read_error = read_error
+        self.rest_error = rest_error
+
+    async def readexactly(self, _count):
+        if self.read_error:
+            raise self.read_error
+        return self.first
+
+    async def readuntil(self, _separator):
+        if self.rest_error:
+            raise self.rest_error
+        return self.rest
+
+
+class _FakeWriter:
+    def __init__(self, *, drain_error=None, close_error=None):
+        self.drain_error = drain_error
+        self.close_error = close_error
+        self.writes = []
+        self.closed = False
+
+    def write(self, payload):
+        self.writes.append(payload)
+
+    async def drain(self):
+        if self.drain_error:
+            raise self.drain_error
+
+    def close(self):
+        self.closed = True
+
+    async def wait_closed(self):
+        if self.close_error:
+            raise self.close_error
+
+
+class ZebraClientFailureCoverageTest(unittest.IsolatedAsyncioTestCase):
+    async def test_sgd_response_shapes_and_read_errors(self):
+        client = ZebraClient("printer", 9100)
+        writer = _FakeWriter(close_error=OSError("close"))
+        with patch.object(MODULE.asyncio, "open_connection", new=AsyncMock(return_value=(_FakeReader(), writer))):
+            self.assertEqual(await client._send("get", expect_reply=True), "value")
+        self.assertTrue(writer.closed)
+
+        with patch.object(MODULE.asyncio, "open_connection", new=AsyncMock(return_value=(_FakeReader(first=b"?"), _FakeWriter()))):
+            self.assertEqual(await client.get("unknown"), None)
+        with patch.object(MODULE.asyncio, "open_connection", new=AsyncMock(return_value=(_FakeReader(first=b"x"), _FakeWriter()))):
+            with self.assertRaisesRegex(MODULE.ZebraConnectionError, "opening quote"):
+                await client.get("broken")
+        incomplete = asyncio.IncompleteReadError(partial=b"", expected=1)
+        with patch.object(MODULE.asyncio, "open_connection", new=AsyncMock(return_value=(_FakeReader(read_error=incomplete), _FakeWriter()))):
+            with self.assertRaisesRegex(MODULE.ZebraConnectionError, "closed the connection"):
+                await client.get("truncated")
+        overrun = asyncio.LimitOverrunError("response too long", 1)
+        with patch.object(MODULE.asyncio, "open_connection", new=AsyncMock(return_value=(_FakeReader(rest_error=overrun), _FakeWriter()))):
+            with self.assertRaisesRegex(MODULE.ZebraConnectionError, "oversized"):
+                await client.get("large")
+        for failure in (OSError("offline"), asyncio.TimeoutError()):
+            with patch.object(MODULE.asyncio, "open_connection", new=AsyncMock(side_effect=failure)):
+                with self.assertRaises(MODULE.ZebraConnectionError):
+                    await client.get("offline")
+
+    async def test_one_way_commands_and_print_job_failures_close_stream(self):
+        client = ZebraClient("printer", 9100)
+        for command in (
+            '! U1 do "ezpl.manual_calibration" ""',
+            "! U1 do test",
+        ):
+            writer = _FakeWriter()
+            with patch.object(MODULE.asyncio, "open_connection", new=AsyncMock(return_value=(_FakeReader(), writer))):
+                if "calibration" in command:
+                    await client.calibrate_media()
+                else:
+                    await client.send_sgd_command(command)
+            self.assertEqual(writer.writes, [(command + "\r\n").encode("ascii")])
+            self.assertTrue(writer.closed)
+
+        writer = _FakeWriter(close_error=asyncio.TimeoutError())
+        with patch.object(MODULE.asyncio, "open_connection", new=AsyncMock(return_value=(_FakeReader(), writer))):
+            await client.send_print_job("^XAé^XZ")
+        self.assertEqual(writer.writes, ["^XAé^XZ".encode("utf-8")])
+        self.assertTrue(writer.closed)
+
+        for failure in (OSError("offline"), asyncio.TimeoutError()):
+            with patch.object(MODULE.asyncio, "open_connection", new=AsyncMock(side_effect=failure)):
+                with self.assertRaisesRegex(MODULE.ZebraConnectionError, "Could not connect"):
+                    await client.send_print_job("^XA^XZ")
+        for failure in (OSError("drain"), asyncio.TimeoutError()):
+            writer = _FakeWriter(drain_error=failure)
+            with patch.object(MODULE.asyncio, "open_connection", new=AsyncMock(return_value=(_FakeReader(), writer))):
+                with self.assertRaisesRegex(MODULE.ZebraConnectionError, "was not retried"):
+                    await client.send_print_job("^XA^XZ")
+            self.assertTrue(writer.closed)

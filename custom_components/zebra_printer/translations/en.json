@@ -1,100 +1,227 @@
 {
-  "title": "Zebra Printer",
-  "config": {
-    "step": {
-      "user": {
-        "title": "Connect to a Zebra printer",
-        "description": "Choose a discovered printer, or enter its address and raw printing port manually. Discovery requires local UDP broadcast traffic.",
-        "data": {
-          "host": "Host",
-          "port": "Port"
-        }
-      },
-      "discovered": {
-        "title": "Zebra printers found",
-        "description": "Choose a printer to add, or choose manual setup.",
-        "data": {
-          "host": "Printer"
-        }
-      }
+    "title":  "Zebra Printer",
+    "services":  {
+                     "set_media_roll": {
+  "name": "Set media roll baseline",
+  "description": "Set the installed roll length and establish a fresh estimate baseline. Omit the remaining length for a new full roll.",
+  "fields": {
+    "roll_length_inches": {
+      "name": "Full roll length (inches)",
+      "description": "Nominal length of a new full roll, in inches."
     },
-    "error": {
-      "cannot_connect": "Cannot read Zebra settings from this printer",
-      "no_printers_found": "No Zebra printers replied to discovery. Enter the printer address manually or check local UDP broadcast access.",
-      "all_printers_configured": "All discovered Zebra printers are already configured in Home Assistant.",
-      "no_compatible_printers_found": "Devices replied to discovery, but none could be verified as compatible Zebra printers. Enter a printer address manually."
-    },
-    "abort": {
-      "already_configured": "This printer is already configured"
-    }
-  },
-  "entity": {
-    "sensor": {
-      "operating_status": {
-        "name": "Operating status",
-        "state_attributes": {
-          "paused": {
-            "name": "Paused"
-          },
-          "errors": {
-            "name": "Errors"
-          },
-          "warnings": {
-            "name": "Warnings"
-          }
-        }
-      },
-      "total_labels": {
-        "name": "Lifetime labels"
-      },
-      "resettable_labels_1": {
-        "name": "Labels since reset 1"
-      },
-      "resettable_labels_2": {
-        "name": "Labels since reset 2"
-      },
-      "total_print_length": {
-        "name": "Lifetime media fed"
-      },
-      "firmware": {
-        "name": "Firmware"
-      },
-      "printhead_temperature": {
-        "name": "Printhead temperature"
-      },
-      "ribbon_inserted": {
-        "name": "Ribbon cartridge"
-      },
-      "paper_supply": {
-        "name": "Paper supply"
-      }
-    },
-    "select": {
-      "print_method": {
-        "name": "Print method"
-      }
-    },
-    "button": {
-      "reset_counter_1": {
-        "name": "Reset label counter 1"
-      },
-      "reset_counter_2": {
-        "name": "Reset label counter 2"
-      }
-    }
-  },
-  "exceptions": {
-    "counter_reset_failed": {
-      "message": "Could not reset the label counter. Check the printer connection and SGD write access."
-    },
-    "print_method_change_failed": {
-      "message": "Could not change the print method. Check the printer connection and SGD write access."
-    },
-    "ribbon_required": {
-      "message": "Load a ribbon cartridge before selecting Thermal Transfer."
-    },
-    "unsupported_print_method": {
-      "message": "The selected print method is not supported."
+    "remaining_length_inches": {
+      "name": "Media remaining now (inches)",
+      "description": "Optional current remaining length for a partly used roll or when resetting after the printer counter changes."
     }
   }
+},
+"print":  {
+                                   "name":  "Print label",
+                                   "description":  "Send raw ZPL to one configured Zebra printer. A successful call means the data was handed to the TCP connection; the printer does not confirm that a label was physically printed.",
+                                   "fields":  {
+                                                  "zpl":  {
+                                                              "name":  "ZPL",
+                                                              "description":  "Raw ZPL text sent as supplied. Add ^CI28 to the ZPL when the printer should interpret UTF-8 text."
+                                                          }
+                                              }
+                               }
+                 },
+    "config":  {
+                   "step":  {
+                                "user":  {
+                                             "title":  "Connect to a Zebra printer",
+                                             "description":  "Choose a discovered printer, or enter its address and raw printing port manually. Discovery requires local UDP broadcast traffic.",
+                                             "data":  {
+                                                          "host":  "Host",
+                                                          "port":  "Port",
+                                                          "rescan":  "Search for printers again"
+                                                      },
+                                             "data_description": {
+                                                              "rescan": "Use this after checking local UDP broadcast access if the printer did not appear."
+                                                      }
+                                         },
+                                "discovered":  {
+                                                   "title":  "Zebra printers found",
+                                                   "description":  "Choose a printer to add, or choose manual setup.",
+                                                   "data":  {
+                                                                "host":  "Printer"
+                                                            }
+                                               },
+                                "reconfigure": {
+                                                  "title": "Update printer connection",
+                                                  "description": "Enter the printer's current host and raw TCP port. The integration verifies its Zebra settings before saving.",
+                                                  "data": {
+                                                             "host": "Host",
+                                                             "port": "Port"
+                                                         }
+                                              }
+                            },
+                   "error":  {
+                                 "cannot_connect":  "Cannot read Zebra settings from this printer",
+                                 "host_required": "Enter a printer host.",
+                                 "already_configured": "This printer is already configured in Home Assistant.",
+                                 "identity_unavailable": "This entry uses a stable printer identity, but the selected printer did not report one. The connection was not changed.",
+                                 "identity_mismatch": "The selected printer has a different stable identity. The connection was not changed.",
+                                 "identity_conflict": "Home Assistant could not safely migrate this printer's device identity. The connection was not changed.",
+                                 "no_printers_found":  "No Zebra printers replied to discovery. Enter the printer address manually or check local UDP broadcast access.",
+                                 "all_printers_configured":  "All discovered Zebra printers are already configured in Home Assistant.",
+                                 "no_compatible_printers_found":  "Devices replied to discovery, but none could be verified as compatible Zebra printers. Enter a printer address manually.",
+                                 "discovery_network_error":  "Home Assistant could not read its network adapters. Check the Network settings, retry discovery, or enter the printer address manually.",
+                                 "discovery_no_interfaces":  "Home Assistant has no enabled IPv4 broadcast interface for discovery. Enable an IPv4 network or enter the printer address manually.",
+                                 "discovery_transport_error":  "Home Assistant could not bind or send discovery probes on the network. Check network permissions and UDP broadcast access, or enter the printer address manually."
+                             },
+                   "abort":  {
+                                 "already_configured":  "This printer is already configured",
+                                 "reconfigure_successful": "Printer connection updated"
+                             }
+               },
+    "options":  {
+                    "step":  {
+                                 "init":  {
+                                              "title":  "Printer event alerts",
+                                              "description":  "Optionally send selected printer alerts to Home Assistant. Enter an HTTP base URL the printer can reach on your local network. Home Assistant registers a local-only webhook; its secret ID is generated and kept private.",
+                                              "data":  {
+                                                           "alerts_enabled":  "Enable printer event alerts",
+                                                           "alerts_base_url":  "Home Assistant base URL reachable by the printer",
+                                                           "alerts_conditions":  "Printer conditions to send"
+                                                       },
+                                              "data_description":  {
+                                                                        "alerts_base_url":  "For example, http://192.168.1.10:8123. The integration adds the webhook path. Do not include credentials, a query, or a fragment.",
+                                                                        "alerts_conditions":  "Only conditions reported by this printer and its HTTP-POST destination are accepted. Both set and clear alerts are sent."
+                                                                    }
+                                          }
+                             },
+                    "error":  {
+                                  "alerts_invalid_url":  "Enter a valid HTTP base URL that the printer can reach. The resulting webhook URL must be no longer than 255 characters.",
+                                  "alerts_select_condition":  "Select at least one printer condition.",
+                                  "alerts_unsupported":  "This printer does not report support for HTTP-POST alerts and every selected condition.",
+                                  "alerts_cannot_connect":  "Cannot read alert capabilities from this printer. Check its connection and try again."
+                              }
+                },
+    "entity":  {
+                   "sensor":  {
+                                  "estimated_media_remaining": {
+  "name": "Estimated media remaining",
+  "state_attributes": {
+    "roll_length_inches": {"name": "Full roll length (inches)"},
+    "remaining_at_baseline_inches": {"name": "Remaining at baseline (inches)"}
+  }
+},
+"operating_status":  {
+                                                           "name":  "Operating status",
+                                                           "state_attributes":  {
+                                                                                    "paused":  {
+                                                                                                   "name":  "Paused"
+                                                                                               },
+                                                                                    "errors":  {
+                                                                                                   "name":  "Errors"
+                                                                                               },
+                                                                                    "warnings":  {
+                                                                                                     "name":  "Warnings"
+                                                                                                 },
+                                                                                    "communication_error":  {
+                                                                                                            "name":  "Communication error"
+                                                                                                        },
+                                                                                    "optional_read_errors":  {
+                                                                                                             "name":  "Optional readings unavailable"
+                                                                                                 }
+                                                                                }
+                                                       },
+                                  "total_labels":  {
+                                                       "name":  "Lifetime labels"
+                                                   },
+                                  "resettable_labels_1":  {
+                                                              "name":  "Labels since reset 1"
+                                                          },
+                                  "resettable_labels_2":  {
+                                                              "name":  "Labels since reset 2"
+                                                          },
+                                  "total_print_length":  {
+                                                             "name":  "Lifetime media fed"
+                                                         },
+                                  "firmware":  {
+                                                   "name":  "Firmware"
+                                               },
+                                  "printhead_temperature":  {
+                                                                "name":  "Printhead temperature"
+                                                            },
+                                  "ribbon_inserted":  {
+                                                          "name":  "Ribbon cartridge"
+                                                      },
+                                  "paper_supply":  {
+                                                       "name":  "Paper supply"
+                                                   },
+                                  "ribbon_remaining":  {
+                                                           "name":  "Ribbon remaining"
+                                                       },
+                                  "printhead_usage":  {
+                                                          "name":  "Printhead lifetime dots"
+                                                      }
+                              },
+                   "number":  {
+                               "print_tone":  {"name":  "Print darkness"},
+                               "print_speed":  {"name":  "Print speed"}
+                           },
+                   "select":  {
+                                  "print_method":  {
+                                                       "name":  "Print method"
+                                                   },
+                                  "media_type":  {"name":  "Media type"},
+                                  "ribbon_low_warning":  {
+                                                             "name":  "Low ribbon warning"
+                                                         }
+                              },
+                   "button":  {
+                                  "reset_counter_1":  {
+                                                          "name":  "Reset label counter 1"
+                                                      },
+                                  "reset_counter_2":  {
+                                                          "name":  "Reset label counter 2"
+                                                      },
+                                  "calibrate_media":  {
+                                                          "name":  "Calibrate media"
+                                                      },
+                                  "test_print":  {
+                                                     "name":  "Print test label"
+                                                 }
+                              }
+               },
+    "exceptions":  {
+                       "counter_reset_failed":  {
+                                                    "message":  "Could not reset the label counter. Check the printer connection and SGD write access."
+                                                },
+                       "print_method_change_failed":  {
+                                                          "message":  "Could not change the print method. Check the printer connection and SGD write access."
+                                                      },
+                       "ribbon_required":  {
+                                               "message":  "Load a ribbon cartridge before selecting Thermal Transfer."
+                                           },
+                       "unsupported_print_method":  {
+                                                        "message":  "The selected print method is not supported."
+                                                    },
+                       "ribbon_cartridge_not_present":  {
+                                                            "message":  "Ribbon cartridge support is unavailable on this printer."
+                                                        },
+                       "unsupported_ribbon_warning":  {
+                                                          "message":  "The selected low-ribbon threshold is not supported."
+                                                      },
+                       "ribbon_warning_change_failed":  {
+                                                            "message":  "Could not change the low-ribbon warning. Check the printer connection and its ribbon-cartridge support."
+                                                        },
+                       "unsupported_media_type":  {
+                                                    "message":  "The selected media type is not supported."
+                                                },
+                       "unsupported_print_configuration_value":  {
+                                                                      "message":  "The value is outside the supported range for this printer."
+                                                                  },
+                       "print_configuration_change_failed":  {
+                                                              "message":  "Could not update the print configuration. Check the printer connection and setting support."
+                                                          },
+                       "media_calibration_failed":  {
+                                                        "message":  "Could not calibrate media. Check the printer connection and whether the media can be calibrated."
+                                                    },
+                       "test_print_failed":  {
+                                                 "message":  "Could not send the test label. The job may have reached the printer; check before retrying."
+                                             }
+                   }
 }

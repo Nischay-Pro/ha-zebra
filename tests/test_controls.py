@@ -23,15 +23,16 @@ def _module(name, *, package=False):
 
 
 def _install_homeassistant_stubs():
-    ha = _module("homeassistant", package=True)
-    components = _module("homeassistant.components", package=True)
-    helpers = _module("homeassistant.helpers", package=True)
+    _module("homeassistant", package=True)
+    _module("homeassistant.components", package=True)
+    _module("homeassistant.helpers", package=True)
     config_entries = _module("homeassistant.config_entries")
     const = _module("homeassistant.const")
     core = _module("homeassistant.core")
     exceptions = _module("homeassistant.exceptions")
     button = _module("homeassistant.components.button")
     select = _module("homeassistant.components.select")
+    sensor = _module("homeassistant.components.sensor")
     entity = _module("homeassistant.helpers.entity")
     entity_platform = _module("homeassistant.helpers.entity_platform")
     update_coordinator = _module("homeassistant.helpers.update_coordinator")
@@ -42,6 +43,10 @@ def _install_homeassistant_stubs():
 
         def __init__(self, coordinator):
             self.coordinator = coordinator
+
+        @property
+        def available(self):
+            return self.coordinator.last_update_success
 
     class HomeAssistantError(Exception):
         def __init__(
@@ -58,10 +63,17 @@ def _install_homeassistant_stubs():
 
     config_entries.ConfigEntry = type("ConfigEntry", (), {})
     const.EntityCategory = SimpleNamespace(CONFIG="config", DIAGNOSTIC="diagnostic")
+    const.UnitOfLength = SimpleNamespace(INCHES="in", METERS="m")
+    const.UnitOfTemperature = SimpleNamespace(CELSIUS="°C")
     core.HomeAssistant = type("HomeAssistant", (), {})
     exceptions.HomeAssistantError = HomeAssistantError
     button.ButtonEntity = type("ButtonEntity", (), {})
     select.SelectEntity = type("SelectEntity", (), {})
+    sensor.SensorDeviceClass = SimpleNamespace(TEMPERATURE="temperature")
+    sensor.SensorEntity = type("SensorEntity", (), {})
+    sensor.SensorStateClass = SimpleNamespace(
+        TOTAL_INCREASING="total_increasing", MEASUREMENT="measurement"
+    )
     entity.DeviceInfo = lambda **kwargs: kwargs
     entity_platform.AddConfigEntryEntitiesCallback = object
     update_coordinator.CoordinatorEntity = CoordinatorEntity
@@ -78,6 +90,7 @@ HomeAssistantError = _install_homeassistant_stubs()
 button_module = importlib.import_module("custom_components.zebra_printer.button")
 select_module = importlib.import_module("custom_components.zebra_printer.select")
 api_module = importlib.import_module("custom_components.zebra_printer.api")
+sensor_module = importlib.import_module("custom_components.zebra_printer.sensor")
 const_module = importlib.import_module("custom_components.zebra_printer.const")
 
 
@@ -104,13 +117,49 @@ class FakeCoordinator:
         self.data = data
         self.client = client or FakeClient()
         self.refresh_count = 0
+        self.last_update_success = True
+        self.last_communication_error = None
 
     async def async_request_refresh(self):
         self.refresh_count += 1
 
 
 def _entry():
-    return SimpleNamespace(entry_id="test_entry", data={"host": "printer.local", "port": 9100})
+    return SimpleNamespace(
+        entry_id="test_entry",
+        data={"host": "printer.local", "port": 9100},
+        unique_id=None,
+        options={},
+    )
+
+
+class ZebraSensorAvailabilityTest(unittest.TestCase):
+    def test_missing_optional_reading_makes_sensor_unavailable(self):
+        for data in (
+            {"model": "ZD420"},
+            {"model": "ZD420", "printhead_usage": None},
+        ):
+            with self.subTest(data=data):
+                sensor = sensor_module.ZebraSensor(
+                    FakeCoordinator(data), _entry(), "printhead_usage"
+                )
+
+                self.assertIsNone(sensor.native_value)
+                self.assertFalse(sensor.available)
+
+    def test_zero_optional_reading_remains_available(self):
+        coordinator = FakeCoordinator({"model": "ZD420", "printhead_usage": 0})
+        sensor = sensor_module.ZebraSensor(coordinator, _entry(), "printhead_usage")
+
+        self.assertEqual(sensor.native_value, 0)
+        self.assertTrue(sensor.available)
+
+    def test_sensor_remains_unavailable_after_coordinator_failure(self):
+        coordinator = FakeCoordinator({"model": "ZD420", "printhead_usage": 10})
+        coordinator.last_update_success = False
+        sensor = sensor_module.ZebraSensor(coordinator, _entry(), "printhead_usage")
+
+        self.assertFalse(sensor.available)
 
 
 class ZebraControlsTest(unittest.IsolatedAsyncioTestCase):
@@ -131,7 +180,7 @@ class ZebraControlsTest(unittest.IsolatedAsyncioTestCase):
                 )
                 self.assertEqual(coordinator.refresh_count, 1)
 
-    async def test_counter_button_is_created_only_when_printer_reports_counter(self):
+    async def test_counter_button_availability_tracks_printer_readings(self):
         coordinator = FakeCoordinator(
             {
                 "model": "ZD420",
@@ -147,7 +196,17 @@ class ZebraControlsTest(unittest.IsolatedAsyncioTestCase):
 
         await button_module.async_setup_entry(hass, _entry(), created.extend)
 
-        self.assertEqual([entity.counter for entity in created], [1])
+        reset_buttons = [
+            entity
+            for entity in created
+            if isinstance(entity, button_module.ZebraCounterReset)
+        ]
+        self.assertEqual([entity.counter for entity in reset_buttons], [1, 2])
+        self.assertTrue(reset_buttons[0].available)
+        self.assertFalse(reset_buttons[1].available)
+
+        coordinator.data["resettable_labels_2"] = 0
+        self.assertTrue(reset_buttons[1].available)
 
     async def test_failed_counter_reset_is_reported_without_refresh(self):
         client = FakeClient(fail_write=True)

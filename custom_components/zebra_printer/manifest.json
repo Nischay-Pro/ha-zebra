@@ -3,7 +3,7 @@
   "name": "Zebra Printer",
   "codeowners": ["@Nischay-Pro"],
   "config_flow": true,
-  "dependencies": ["network"],
+  "dependencies": ["network", "webhook"],
   "documentation": "https://github.com/Nischay-Pro/ha-zebra",
   "integration_type": "device",
   "iot_class": "local_polling",
