@@ -12,7 +12,31 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.14'
-      - run: python -m unittest discover -s tests -v
+      - run: python -m pip install coverage==7.16.2 probatio==0.13.0
+      - run: coverage run --branch --source=custom_components/zebra_printer -m unittest discover -s tests -v
+      - run: coverage report --fail-under=100
+      - run: coverage json --pretty-print -o /tmp/coverage.json
+      - run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          report = json.loads(Path('/tmp/coverage.json').read_text())
+          functions = [
+              (filename, name, details)
+              for filename, file_data in report['files'].items()
+              for name, details in file_data['functions'].items()
+              if name
+          ]
+          uncovered = [
+              (filename, name)
+              for filename, name, details in functions
+              if not details['executed_lines']
+          ]
+          if not functions or uncovered:
+              raise SystemExit(f'Function coverage is incomplete: {uncovered}')
+          print(f'Function coverage: {len(functions)}/{len(functions)} (100%)')
+          PY
 
   hacs:
     runs-on: ubuntu-latest

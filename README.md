@@ -171,12 +171,14 @@ registration; use values appropriate for the loaded media.
 
 ## 5. Media roll estimate
 
-After loading a roll, call the `zebra_printer.set_media_roll` action. Enter the
-roll's full nominal length in inches and target the printer device. When the
-roll is new and full, omit `remaining_length_inches`; for a partly used roll,
-enter the estimated media remaining at setup (use `0` for an empty roll). The action refreshes the
-printer's lifetime media-fed counter, saves the roll settings in the
-configuration entry, and uses that reading as the baseline.
+After loading a roll, open **Settings → Devices & services**, select the Zebra
+Printer entry, choose **Configure**, then **Set media roll estimate**. Enter the
+roll's full nominal length in inches. Leave the remaining length blank for a
+new full roll; for a partly used roll, enter the estimated media remaining.
+Saving refreshes the printer's lifetime media-fed counter and uses that reading
+as the new estimate baseline.
+
+The `zebra_printer.set_media_roll` action is also available for automations:
 
 ```yaml
 action: zebra_printer.set_media_roll
@@ -191,9 +193,8 @@ additional media fed by the printer, and clamps the result to zero. The printer
 does not directly measure roll length. This estimate can drift because the
 counter includes media used for calibration, test labels, and waste, and it may
 not account for media removed outside the printer. If the lifetime counter
-drops below the saved baseline, the sensor becomes unavailable. Call the action
-again with the full roll length and the media currently remaining to establish
-a new baseline.
+drops below the saved baseline, the sensor becomes unavailable. Use **Set media
+roll estimate** again to establish a new baseline.
 
 ## 6. Dashboard controls
 

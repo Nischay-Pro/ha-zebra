@@ -11,6 +11,8 @@ import sys
 import types
 import unittest
 from types import SimpleNamespace
+
+import probatio
 from unittest.mock import AsyncMock, Mock, patch
 
 import test_controls as controls
@@ -80,6 +82,9 @@ class _OptionsFlow:
     def async_show_form(self, **kwargs):
         return {"type": "form", **kwargs}
 
+    def async_show_menu(self, **kwargs):
+        return {"type": "menu", **kwargs}
+
     def async_create_entry(self, **kwargs):
         return {"type": "create_entry", **kwargs}
 
@@ -141,6 +146,9 @@ device_registry.async_get = lambda hass: hass.device_registry
 config_validation = _module("homeassistant.helpers.config_validation")
 helpers.config_validation = config_validation
 config_validation.string = str
+config_validation.positive_float = probatio.All(
+    probatio.Coerce(float), probatio.NonNegative()
+)
 config_validation.multi_select = lambda options: ("multi_select", tuple(options))
 
 number_component = _module("homeassistant.components.number")
@@ -293,6 +301,11 @@ class AlertConfigurationTest(unittest.TestCase):
         self.assertFalse(alerts_module.is_alerts_enabled({}))
         self.assertFalse(alerts_module.is_alerts_enabled({alerts_module.CONF_ALERTS_ENABLED: 1}))
         self.assertTrue(alerts_module.is_alerts_enabled(_alert_options()))
+        disabled_options = _alert_options(
+            **{alerts_module.CONF_ALERTS_ENABLED: False}
+        )
+        self.assertFalse(alerts_module.is_alerts_enabled(disabled_options))
+        self.assertIsNone(alerts_module.callback_url_from_options(disabled_options))
         self.assertIsNone(alerts_module.callback_url_from_options({}))
         self.assertIsNone(
             alerts_module.callback_url_from_options(
@@ -1160,7 +1173,7 @@ class ServicesCoverageTest(unittest.TestCase):
         with self.assertRaisesRegex(_ServiceValidationError, "baseline was not changed"):
             asyncio.run(handler(call))
         coordinator.last_update_success = True
-        for invalid in (None, True, -1, float("inf"), "bad"):
+        for invalid in (None, True, -1, float("inf"), "bad", 10**1000):
             coordinator.data = {"total_print_length": invalid}
             with self.subTest(counter=invalid), self.assertRaisesRegex(_ServiceValidationError, "counter is unavailable"):
                 asyncio.run(handler(call))
@@ -1286,37 +1299,270 @@ class ConfigFlowCoverageTest(unittest.TestCase):
             result = asyncio.run(flow.async_step_reconfigure({"host": "new"}))
         self.assertEqual(flow._new_unique_id, "new")
 
-    def test_alert_options_disabled_invalid_unsupported_connection_and_success(self):
+    def test_alert_options_are_conditional_and_values_survive_disable(self):
         flow = config_flow_module.ZebraPrinterOptionsFlow()
-        flow.config_entry = SimpleNamespace(
-            data={"host": "printer.local", "port": 9100},
-            options={"keep": "yes", config_flow_module.CONF_ALERTS_ENABLED: True, config_flow_module.CONF_ALERTS_WEBHOOK_ID: _WEBHOOK_ID},
-        )
-        keys = config_flow_module._ALERT_OPTION_KEYS
-        disabled = asyncio.run(flow.async_step_init({config_flow_module.CONF_ALERTS_ENABLED: False}))
-        self.assertFalse(disabled["data"][config_flow_module.CONF_ALERTS_ENABLED])
-        self.assertEqual(disabled["data"], {"keep": "yes", config_flow_module.CONF_ALERTS_ENABLED: False})
-        enabled = config_flow_module.CONF_ALERTS_ENABLED
         base = config_flow_module.CONF_ALERTS_BASE_URL
         conditions = config_flow_module.CONF_ALERTS_CONDITIONS
-        self.assertIn("base", asyncio.run(flow.async_step_init({enabled: True, base: "https://ha.local", conditions: []}))["errors"])
-        payload = {enabled: True, base: "file:///bad", conditions: ["media_out"]}
-        self.assertEqual(asyncio.run(flow.async_step_init(payload))["errors"], {"base": "alerts_invalid_url"})
+        enabled = config_flow_module.CONF_ALERTS_ENABLED
+        webhook_id = config_flow_module.CONF_ALERTS_WEBHOOK_ID
+        saved_options = {
+            "keep": "yes",
+            enabled: True,
+            base: "http://ha.local:8123",
+            conditions: ["PAPER OUT"],
+            webhook_id: _WEBHOOK_ID,
+        }
+        flow.config_entry = SimpleNamespace(
+            data={"host": "printer.local", "port": 9100},
+            options=saved_options,
+        )
+
+        initial_form = asyncio.run(flow.async_step_alerts())
+        self.assertEqual(initial_form["step_id"], "alerts")
+        self.assertEqual(
+            set(initial_form["data_schema"].schema),
+            {enabled},
+        )
+
+        settings_form = asyncio.run(flow.async_step_alerts({enabled: True}))
+        self.assertEqual(settings_form["step_id"], "alerts_config")
+        self.assertEqual(
+            set(settings_form["data_schema"].schema),
+            {base, conditions},
+        )
+        self.assertEqual(
+            asyncio.run(flow.async_step_alerts_config())["step_id"],
+            "alerts_config",
+        )
+
+        disabled = asyncio.run(flow.async_step_alerts({enabled: False}))
+        self.assertFalse(disabled["data"][enabled])
+        self.assertEqual(disabled["data"]["keep"], "yes")
+        self.assertEqual(disabled["data"][base], saved_options[base])
+        self.assertEqual(disabled["data"][conditions], saved_options[conditions])
+        self.assertEqual(disabled["data"][webhook_id], _WEBHOOK_ID)
+
+        self.assertIn(
+            "base",
+            asyncio.run(
+                flow.async_step_alerts_config(
+                    {base: "https://ha.local", conditions: []}
+                )
+            )["errors"],
+        )
+        payload = {base: "file:///bad", conditions: ["media_out"]}
+        self.assertEqual(
+            asyncio.run(flow.async_step_alerts_config(payload))["errors"],
+            {"base": "alerts_invalid_url"},
+        )
         payload[base] = "http://ha.local"
-        with patch.object(config_flow_module, "async_validate_alert_support", new=AsyncMock(side_effect=config_flow_module.ZebraAlertUnsupportedError("unsupported"))):
-            self.assertEqual(asyncio.run(flow.async_step_init(payload))["errors"], {"base": "alerts_unsupported"})
-        with patch.object(config_flow_module, "async_validate_alert_support", new=AsyncMock(side_effect=ZebraConnectionError("offline"))):
-            self.assertEqual(asyncio.run(flow.async_step_init(payload))["errors"], {"base": "alerts_cannot_connect"})
-        with patch.object(config_flow_module, "async_validate_alert_support", new=AsyncMock()):
-            saved = asyncio.run(flow.async_step_init(payload))
+        with patch.object(
+            config_flow_module,
+            "async_validate_alert_support",
+            new=AsyncMock(
+                side_effect=config_flow_module.ZebraAlertUnsupportedError(
+                    "unsupported"
+                )
+            ),
+        ):
+            self.assertEqual(
+                asyncio.run(flow.async_step_alerts_config(payload))["errors"],
+                {"base": "alerts_unsupported"},
+            )
+        with patch.object(
+            config_flow_module,
+            "async_validate_alert_support",
+            new=AsyncMock(side_effect=ZebraConnectionError("offline")),
+        ):
+            self.assertEqual(
+                asyncio.run(flow.async_step_alerts_config(payload))["errors"],
+                {"base": "alerts_cannot_connect"},
+            )
+        with patch.object(
+            config_flow_module,
+            "async_validate_alert_support",
+            new=AsyncMock(),
+        ):
+            saved = asyncio.run(flow.async_step_alerts_config(payload))
         self.assertTrue(saved["data"][enabled])
-        self.assertEqual(saved["data"][config_flow_module.CONF_ALERTS_WEBHOOK_ID], _WEBHOOK_ID)
-        self.assertTrue(all(key in saved["data"] for key in keys))
-        flow.config_entry.options.pop(config_flow_module.CONF_ALERTS_WEBHOOK_ID)
-        with patch.object(config_flow_module.webhook, "async_generate_id", return_value="b" * 64), patch.object(config_flow_module, "async_validate_alert_support", new=AsyncMock()):
-            saved = asyncio.run(flow.async_step_init(payload))
-        self.assertEqual(saved["data"][config_flow_module.CONF_ALERTS_WEBHOOK_ID], "b" * 64)
-        self.assertEqual(asyncio.run(flow.async_step_init())["step_id"], "init")
+        self.assertEqual(saved["data"][webhook_id], _WEBHOOK_ID)
+        self.assertTrue(
+            all(key in saved["data"] for key in config_flow_module._ALERT_OPTION_KEYS)
+        )
+
+        flow.config_entry.options.pop(webhook_id)
+        with (
+            patch.object(
+                config_flow_module.webhook,
+                "async_generate_id",
+                return_value="b" * 64,
+            ),
+            patch.object(
+                config_flow_module,
+                "async_validate_alert_support",
+                new=AsyncMock(),
+            ),
+        ):
+            saved = asyncio.run(flow.async_step_alerts_config(payload))
+        self.assertEqual(saved["data"][webhook_id], "b" * 64)
+        menu = asyncio.run(flow.async_step_init(None))
+        self.assertEqual(menu["type"], "menu")
+        self.assertEqual(menu["menu_options"], ["media_roll", "alerts"])
+        self.assertEqual(
+            asyncio.run(flow.async_step_alerts())["step_id"], "alerts"
+        )
+
+    def test_media_roll_options_flow_records_full_and_partial_rolls(self):
+        flow = config_flow_module.ZebraPrinterOptionsFlow()
+        entry = SimpleNamespace(
+            entry_id="entry-1",
+            data={"host": "printer.local", "port": 9100},
+            options={"keep": "yes", "alerts_enabled": True},
+        )
+        flow.config_entry = entry
+        coordinator = SimpleNamespace(
+            data={"total_print_length": 1234.5},
+            last_update_success=True,
+            async_request_refresh=AsyncMock(),
+        )
+        flow.hass = SimpleNamespace(
+            data={config_flow_module.DOMAIN: {entry.entry_id: coordinator}}
+        )
+
+        form = asyncio.run(flow.async_step_media_roll())
+        self.assertEqual(form["step_id"], "media_roll")
+        roll_key = config_flow_module.CONF_MEDIA_ROLL_LENGTH_INCHES
+        remaining_key = config_flow_module.CONF_MEDIA_ROLL_REMAINING_INCHES
+        self.assertIn(roll_key, form["data_schema"].schema)
+        serialized_fields = probatio.to_field_list(
+            probatio.Schema(
+                {
+                    probatio.Required(roll_key): form["data_schema"].schema[roll_key],
+                    probatio.Optional(remaining_key): form["data_schema"].schema[
+                        remaining_key
+                    ],
+                }
+            )
+        )
+        self.assertEqual(
+            serialized_fields,
+            [
+                {
+                    "type": "float",
+                    "valueMin": 0,
+                    "name": roll_key,
+                    "required": True,
+                },
+                {
+                    "type": "float",
+                    "valueMin": 0,
+                    "name": remaining_key,
+                    "required": False,
+                    "optional": True,
+                },
+            ],
+        )
+        self.assertEqual(
+            asyncio.run(flow.async_step_media_roll({}))["errors"],
+            {"base": "media_roll_length_required"},
+        )
+        for invalid_roll in (0, -1, float("nan"), float("inf"), True, "bad"):
+            with self.subTest(invalid_roll=invalid_roll):
+                self.assertEqual(
+                    asyncio.run(
+                        flow.async_step_media_roll(
+                            {roll_key: invalid_roll}
+                        )
+                    )["errors"],
+                    {"base": "media_roll_length_invalid"},
+                )
+        for invalid_remaining in (-1, float("nan"), float("inf"), True, "bad"):
+            with self.subTest(invalid_remaining=invalid_remaining):
+                self.assertEqual(
+                    asyncio.run(
+                        flow.async_step_media_roll(
+                            {roll_key: 100, remaining_key: invalid_remaining}
+                        )
+                    )["errors"],
+                    {"base": "media_roll_remaining_invalid"},
+                )
+        self.assertEqual(
+            asyncio.run(
+                flow.async_step_media_roll(
+                    {
+                        config_flow_module.CONF_MEDIA_ROLL_LENGTH_INCHES: 100,
+                        config_flow_module.CONF_MEDIA_ROLL_REMAINING_INCHES: 101,
+                    }
+                )
+            )["errors"],
+            {"base": "media_roll_remaining_exceeds_roll"},
+        )
+
+        flow.hass.data[config_flow_module.DOMAIN] = {}
+        self.assertEqual(
+            asyncio.run(
+                flow.async_step_media_roll(
+                    {config_flow_module.CONF_MEDIA_ROLL_LENGTH_INCHES: 100}
+                )
+            )["errors"],
+            {"base": "media_roll_printer_not_ready"},
+        )
+        flow.hass.data[config_flow_module.DOMAIN][entry.entry_id] = coordinator
+        coordinator.last_update_success = False
+        self.assertEqual(
+            asyncio.run(
+                flow.async_step_media_roll(
+                    {config_flow_module.CONF_MEDIA_ROLL_LENGTH_INCHES: 100}
+                )
+            )["errors"],
+            {"base": "media_roll_counter_unavailable"},
+        )
+        coordinator.last_update_success = True
+        full_roll = asyncio.run(
+            flow.async_step_media_roll(
+                {config_flow_module.CONF_MEDIA_ROLL_LENGTH_INCHES: 1000}
+            )
+        )
+        self.assertEqual(full_roll["type"], "create_entry")
+        self.assertEqual(full_roll["data"]["keep"], "yes")
+        self.assertTrue(full_roll["data"]["alerts_enabled"])
+        self.assertEqual(
+            full_roll["data"][config_flow_module.CONF_MEDIA_ROLL_LENGTH_INCHES],
+            1000,
+        )
+        self.assertEqual(
+            full_roll["data"][config_flow_module.CONF_MEDIA_ROLL_BASELINE_INCHES],
+            1234.5,
+        )
+        self.assertEqual(
+            full_roll["data"][config_flow_module.CONF_MEDIA_ROLL_REMAINING_INCHES],
+            1000,
+        )
+
+        entry.options = full_roll["data"]
+        coordinator.data["total_print_length"] = 1240
+        partial_roll = asyncio.run(
+            flow.async_step_media_roll(
+                {
+                    config_flow_module.CONF_MEDIA_ROLL_LENGTH_INCHES: 1000,
+                    config_flow_module.CONF_MEDIA_ROLL_REMAINING_INCHES: 450,
+                }
+            )
+        )
+        self.assertEqual(
+            partial_roll["data"][config_flow_module.CONF_MEDIA_ROLL_BASELINE_INCHES],
+            1240,
+        )
+        self.assertEqual(
+            partial_roll["data"][config_flow_module.CONF_MEDIA_ROLL_REMAINING_INCHES],
+            450,
+        )
+        entry.options = partial_roll["data"]
+        saved_form = asyncio.run(flow.async_step_media_roll())
+        self.assertIn(
+            config_flow_module.CONF_MEDIA_ROLL_LENGTH_INCHES,
+            saved_form["data_schema"].schema,
+        )
 class _FakeDiscoveryTransport:
     def __init__(self, *, send_error=None):
         self.send_error = send_error
@@ -1657,19 +1903,42 @@ class IntegrationLifecycleCoverageTest(unittest.TestCase):
 
     def test_entry_setup_without_stable_identity_or_alerts(self):
         hass = self._hass()
-        entry = self._entry()
+        entry = self._entry(
+            options=_alert_options(
+                **{alerts_module.CONF_ALERTS_ENABLED: False}
+            )
+        )
         client = _SgdClient(_valid_printer_values())
         client.host, client.port = entry.data["host"], entry.data["port"]
-        with patch.object(integration_module, "ZebraClient", return_value=client), patch.object(integration_module, "async_migrate_config_entry_identity") as migrate:
+        with (
+            patch.object(integration_module, "ZebraClient", return_value=client),
+            patch.object(
+                integration_module,
+                "async_migrate_config_entry_identity",
+            ) as migrate,
+            patch.object(
+                integration_module,
+                "async_register_webhook",
+                new=AsyncMock(),
+            ) as register,
+            patch.object(
+                integration_module,
+                "async_configure_printer_alerts",
+                new=AsyncMock(),
+            ) as configure,
+        ):
             self.assertTrue(asyncio.run(integration_module.async_setup_entry(hass, entry)))
         coordinator = hass.data[integration_module.DOMAIN][entry.entry_id]
         self.assertEqual(coordinator.data["total_labels"], 42)
         self.assertIsNone(coordinator.alert_configuration)
         migrate.assert_not_called()
+        register.assert_not_awaited()
+        configure.assert_not_awaited()
         entry.async_on_unload.assert_called_once_with("listener")
         entry.add_update_listener.assert_called_once()
-        hass.config_entries.async_forward_entry_setups.assert_awaited_once_with(entry, integration_module.PLATFORMS)
-
+        hass.config_entries.async_forward_entry_setups.assert_awaited_once_with(
+            entry, integration_module.PLATFORMS
+        )
     def test_entry_setup_stable_identity_and_alert_configuration_outcomes(self):
         options = _alert_options()
         entry = self._entry(options=options)

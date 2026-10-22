@@ -25,8 +25,20 @@ from .alerts import (
     build_callback_url,
     is_alerts_enabled,
 )
-from .const import DEFAULT_PORT, DOMAIN
+from .const import (
+    CONF_MEDIA_ROLL_BASELINE_INCHES,
+    CONF_MEDIA_ROLL_LENGTH_INCHES,
+    CONF_MEDIA_ROLL_REMAINING_INCHES,
+    DEFAULT_PORT,
+    DOMAIN,
+)
 from .discovery import ZebraDiscoveryError, async_discover_printers
+from .services import (
+    MediaRollBaselineError,
+    _nonnegative_finite_length,
+    _positive_finite_length,
+    async_get_media_roll_baseline,
+)
 from .identity import (
     async_migrate_config_entry_identity,
     config_entry_unique_id,
@@ -310,22 +322,115 @@ class ZebraPrinterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class ZebraPrinterOptionsFlow(config_entries.OptionsFlow):
-    """Configure optional printer-originated HTTP alert delivery."""
+    """Configure media-roll estimates and printer-originated HTTP alerts."""
 
     async def async_step_init(self, user_input=None):
-        """Enable or disable selected Zebra alert conditions."""
+        """Choose which printer settings to configure."""
+        return self.async_show_menu(
+            step_id="init",
+            menu_options=["media_roll", "alerts"],
+        )
+
+    async def async_step_media_roll(self, user_input=None):
+        """Set the installed roll length and establish a fresh baseline."""
         errors: dict[str, str] = {}
+        current_options = self.config_entry.options
+        if user_input is not None:
+            roll_length = user_input.get(CONF_MEDIA_ROLL_LENGTH_INCHES)
+            remaining = user_input.get(CONF_MEDIA_ROLL_REMAINING_INCHES)
+            if roll_length is None:
+                errors["base"] = "media_roll_length_required"
+            else:
+                try:
+                    roll_length = _positive_finite_length(roll_length)
+                except vol.Invalid:
+                    errors["base"] = "media_roll_length_invalid"
+
+            if not errors:
+                if remaining is None:
+                    remaining = roll_length
+                else:
+                    try:
+                        remaining = _nonnegative_finite_length(remaining)
+                    except vol.Invalid:
+                        errors["base"] = "media_roll_remaining_invalid"
+
+            if not errors and remaining > roll_length:
+                errors["base"] = "media_roll_remaining_exceeds_roll"
+
+            if not errors:
+                coordinator = self.hass.data.get(DOMAIN, {}).get(
+                    self.config_entry.entry_id
+                )
+                if coordinator is None:
+                    errors["base"] = "media_roll_printer_not_ready"
+                else:
+                    try:
+                        baseline = await async_get_media_roll_baseline(coordinator)
+                    except MediaRollBaselineError:
+                        errors["base"] = "media_roll_counter_unavailable"
+                    else:
+                        options = dict(current_options)
+                        options.update(
+                            {
+                                CONF_MEDIA_ROLL_LENGTH_INCHES: roll_length,
+                                CONF_MEDIA_ROLL_BASELINE_INCHES: baseline,
+                                CONF_MEDIA_ROLL_REMAINING_INCHES: remaining,
+                            }
+                        )
+                        return self.async_create_entry(
+                            title="",
+                            data=options,
+                        )
+
+        schema = {}
+        stored_roll_length = current_options.get(
+            CONF_MEDIA_ROLL_LENGTH_INCHES
+        )
+        if stored_roll_length is None:
+            roll_length_field = vol.Required(CONF_MEDIA_ROLL_LENGTH_INCHES)
+        else:
+            roll_length_field = vol.Required(
+                CONF_MEDIA_ROLL_LENGTH_INCHES,
+                default=stored_roll_length,
+            )
+        schema[roll_length_field] = cv.positive_float
+        schema[
+            vol.Optional(CONF_MEDIA_ROLL_REMAINING_INCHES)
+        ] = cv.positive_float
+        return self.async_show_form(
+            step_id="media_roll",
+            data_schema=vol.Schema(schema),
+            errors=errors,
+        )
+
+    async def async_step_alerts(self, user_input=None):
+        """Choose whether to enable selected Zebra alert conditions."""
         current_options = self.config_entry.options
         if user_input is not None:
             if not user_input[CONF_ALERTS_ENABLED]:
                 options = dict(current_options)
-                for key in _ALERT_OPTION_KEYS:
-                    options.pop(key, None)
                 options[CONF_ALERTS_ENABLED] = False
-                return self.async_create_entry(
-                    title="", data=options
-                )
+                return self.async_create_entry(title="", data=options)
+            return await self.async_step_alerts_config()
 
+        return self.async_show_form(
+            step_id="alerts",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_ALERTS_ENABLED,
+                        default=is_alerts_enabled(current_options),
+                    ): bool,
+                }
+            ),
+        )
+
+    async def async_step_alerts_config(self, user_input=None):
+        """Configure selected Zebra alert conditions and their destination."""
+        errors: dict[str, str] = {}
+        current_options = self.config_entry.options
+        if user_input is not None:
             base_url = str(user_input.get(CONF_ALERTS_BASE_URL, "")).strip()
             conditions = tuple(user_input.get(CONF_ALERTS_CONDITIONS, ()))
             webhook_id = current_options.get(CONF_ALERTS_WEBHOOK_ID)
@@ -362,15 +467,10 @@ class ZebraPrinterOptionsFlow(config_entries.OptionsFlow):
                         CONF_ALERTS_WEBHOOK_ID: webhook_id,
                     }
                 )
-                return self.async_create_entry(
-                    title="",
-                    data=options,
-                )
+                return self.async_create_entry(title="", data=options)
 
-        enabled = is_alerts_enabled(current_options)
         schema = vol.Schema(
             {
-                vol.Required(CONF_ALERTS_ENABLED, default=enabled): bool,
                 vol.Optional(
                     CONF_ALERTS_BASE_URL,
                     default=current_options.get(CONF_ALERTS_BASE_URL, ""),
@@ -382,5 +482,5 @@ class ZebraPrinterOptionsFlow(config_entries.OptionsFlow):
             }
         )
         return self.async_show_form(
-            step_id="init", data_schema=schema, errors=errors
+            step_id="alerts_config", data_schema=schema, errors=errors
         )

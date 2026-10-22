@@ -75,29 +75,60 @@
                                  "reconfigure_successful": "Printer connection updated"
                              }
                },
-    "options":  {
-                    "step":  {
-                                 "init":  {
-                                              "title":  "Printer event alerts",
-                                              "description":  "Optionally send selected printer alerts to Home Assistant. Enter an HTTP base URL the printer can reach on your local network. Home Assistant registers a local-only webhook; its secret ID is generated and kept private.",
-                                              "data":  {
-                                                           "alerts_enabled":  "Enable printer event alerts",
-                                                           "alerts_base_url":  "Home Assistant base URL reachable by the printer",
-                                                           "alerts_conditions":  "Printer conditions to send"
-                                                       },
-                                              "data_description":  {
-                                                                        "alerts_base_url":  "For example, http://192.168.1.10:8123. The integration adds the webhook path. Do not include credentials, a query, or a fragment.",
-                                                                        "alerts_conditions":  "Only conditions reported by this printer and its HTTP-POST destination are accepted. Both set and clear alerts are sent."
-                                                                    }
-                                          }
-                             },
-                    "error":  {
-                                  "alerts_invalid_url":  "Enter a valid HTTP base URL that the printer can reach. The resulting webhook URL must be no longer than 255 characters.",
-                                  "alerts_select_condition":  "Select at least one printer condition.",
-                                  "alerts_unsupported":  "This printer does not report support for HTTP-POST alerts and every selected condition.",
-                                  "alerts_cannot_connect":  "Cannot read alert capabilities from this printer. Check its connection and try again."
-                              }
+    "options":     {
+        "step": {
+            "init": {
+                "title": "Printer settings",
+                "menu_options": {
+                    "media_roll": "Set media roll estimate",
+                    "alerts": "Configure printer event alerts"
+                }
+            },
+            "media_roll": {
+                "title": "Set media roll estimate",
+                "description": "Use this after loading a roll. The printer's current lifetime media counter is saved as the estimate baseline.",
+                "data": {
+                    "media_roll_length_inches": "Full roll length (inches)",
+                    "media_roll_remaining_inches": "Remaining length at baseline (inches)"
                 },
+                "data_description": {
+                    "media_roll_length_inches": "Enter the nominal length of a new full roll.",
+                    "media_roll_remaining_inches": "Leave blank for a new full roll. Enter the estimated remaining length for a partly used roll."
+                }
+            },
+            "alerts": {
+                "title": "Printer event alerts",
+                "description": "Enable or disable printer event alerts. Enabling opens the destination and condition settings.",
+                "data": {
+                    "alerts_enabled": "Enable printer event alerts"
+                }
+            },
+            "alerts_config": {
+                "title": "Configure printer event alerts",
+                "description": "Send selected printer alerts to Home Assistant. Enter an HTTP base URL the printer can reach on your local network. Home Assistant registers a local-only webhook; its secret ID is generated and kept private.",
+                "data": {
+                    "alerts_base_url": "Home Assistant base URL reachable by the printer",
+                    "alerts_conditions": "Printer conditions to send"
+                },
+                "data_description": {
+                    "alerts_base_url": "For example, http://192.168.1.10:8123. The integration adds the webhook path. Do not include credentials, a query, or a fragment.",
+                    "alerts_conditions": "Only conditions reported by this printer and its HTTP-POST destination are accepted. Both set and clear alerts are sent."
+                }
+            }
+        },
+        "error": {
+            "alerts_invalid_url": "Enter a valid HTTP base URL that the printer can reach. The resulting webhook URL must be no longer than 255 characters.",
+            "alerts_select_condition": "Select at least one printer condition.",
+            "alerts_unsupported": "This printer does not report support for HTTP-POST alerts and every selected condition.",
+            "alerts_cannot_connect": "Cannot read alert capabilities from this printer. Check its connection and try again.",
+            "media_roll_length_required": "Enter the full roll length.",
+            "media_roll_length_invalid": "Enter a finite roll length greater than zero.",
+            "media_roll_remaining_invalid": "Enter a finite remaining length of zero or more.",
+            "media_roll_remaining_exceeds_roll": "Remaining media length cannot exceed the full roll length.",
+            "media_roll_printer_not_ready": "The printer is not ready. Check its connection and try again.",
+            "media_roll_counter_unavailable": "Cannot read the printer's lifetime media counter. The estimate was not changed."
+        }
+    },
     "entity":  {
                    "sensor":  {
                                   "estimated_media_remaining": {

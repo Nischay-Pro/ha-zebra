@@ -110,6 +110,38 @@ def _get_config_entry(hass: HomeAssistant, device_id: str) -> ConfigEntry:
     return entry
 
 
+class MediaRollBaselineError(ValueError):
+    """The printer's media counter cannot establish a safe roll baseline."""
+
+
+async def async_get_media_roll_baseline(coordinator) -> int | float:
+    """Refresh the printer and return a valid lifetime media counter."""
+    await coordinator.async_request_refresh()
+    if not coordinator.last_update_success:
+        raise MediaRollBaselineError(
+            "Could not read the printer's lifetime media counter; the roll baseline was not changed"
+        )
+
+    current_length = coordinator.data.get("total_print_length")
+    if not isinstance(current_length, (int, float)) or isinstance(
+        current_length, bool
+    ):
+        raise MediaRollBaselineError(
+            "The printer's lifetime media counter is unavailable; the roll baseline was not changed"
+        )
+    try:
+        finite_length = float(current_length)
+    except (TypeError, ValueError, OverflowError) as err:
+        raise MediaRollBaselineError(
+            "The printer's lifetime media counter is unavailable; the roll baseline was not changed"
+        ) from err
+    if not math.isfinite(finite_length) or finite_length < 0:
+        raise MediaRollBaselineError(
+            "The printer's lifetime media counter is unavailable; the roll baseline was not changed"
+        )
+    return current_length
+
+
 @callback
 def async_setup_services(hass: HomeAssistant) -> None:
     """Register Zebra service actions."""
@@ -148,21 +180,10 @@ def async_setup_services(hass: HomeAssistant) -> None:
             )
 
         # Establish the baseline from a fresh odometer reading, never stale data.
-        await coordinator.async_request_refresh()
-        if not coordinator.last_update_success:
-            raise ServiceValidationError(
-                "Could not read the printer's lifetime media counter; the roll baseline was not changed"
-            )
-        current_length = coordinator.data.get("total_print_length")
-        if (
-            not isinstance(current_length, (int, float))
-            or isinstance(current_length, bool)
-            or not math.isfinite(float(current_length))
-            or current_length < 0
-        ):
-            raise ServiceValidationError(
-                "The printer's lifetime media counter is unavailable; the roll baseline was not changed"
-            )
+        try:
+            current_length = await async_get_media_roll_baseline(coordinator)
+        except MediaRollBaselineError as err:
+            raise ServiceValidationError(str(err)) from err
 
         # Merge with existing options so printer-alert settings remain intact.
         options = dict(entry.options)
