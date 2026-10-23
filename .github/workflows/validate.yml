@@ -8,11 +8,11 @@ jobs:
   tests:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.1.0
         with:
           python-version: '3.14'
-      - run: python -m pip install coverage==7.16.2 probatio==0.13.0
+      - run: python -m pip install -r requirements-test.txt
       - run: coverage run --branch --source=custom_components/zebra_printer -m unittest discover -s tests -v
       - run: coverage report --fail-under=100
       - run: coverage json --pretty-print -o /tmp/coverage.json
@@ -41,7 +41,7 @@ jobs:
   hacs:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
       - uses: hacs/action@main
         with:
           category: integration
@@ -49,5 +49,5 @@ jobs:
   hassfest:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
       - uses: home-assistant/actions/hassfest@master

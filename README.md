@@ -30,7 +30,8 @@
   <a href="#6-dashboard-controls">Dashboard controls</a> ·
   <a href="#7-printer-event-alerts">Printer alerts</a> ·
   <a href="#8-troubleshooting">Troubleshooting</a> ·
-  <a href="#9-development">Development</a>
+  <a href="#9-development">Development</a> ·
+  <a href="#about-this-integration">About</a>
 </p>
 
 ## Supported devices
@@ -39,8 +40,12 @@
 | --- | --- | :---: | --- |
 | Zebra | ZD420 | ✅ | Fully supported |
 
-Other Zebra models may expose different SGD settings or counters. Print jobs
-are sent as raw ZPL over the local TCP port.
+> ⚠️ Other models are not confirmed as fully supported. If an unlisted Zebra
+> printer works without issues, [report its model and firmware](https://github.com/Nischay-Pro/ha-zebra/issues/new?template=device_compatibility.yml)
+> so we can consider adding it to this list.
+
+Different models may expose different SGD settings or counters. Print jobs are
+sent as raw ZPL over the local TCP port.
 
 ## Features
 
@@ -335,24 +340,63 @@ Zebra references: [HTTP POST alert payload](https://docs.zebra.com/us/en/printer
 
 ## 9. Development
 
-The integration uses Home Assistant's native entity and polling APIs. The test
-suite covers the SGD client, status decoding, controls, and feature behavior;
-run it with `python -m unittest discover -s tests -v`. GitHub Actions run the
-test and coverage checks, Ruff lint, HACS validation, and hassfest on pushes
-and pull requests.
+The integration lives in `custom_components/zebra_printer` and uses Home
+Assistant's coordinator and entity APIs. It talks to printers over local TCP
+with Zebra SGD commands; discovery uses UDP broadcast.
 
-Home Assistant setup and entity names are currently available in English via
-`custom_components/zebra_printer/translations/en.json`.
+- `api.py`, `discovery.py`, and `identity.py` handle printer communication,
+  discovery, and stable device identity.
+- `config_flow.py`, `__init__.py`, and `alerts.py` handle setup, entry lifecycle,
+  and printer event alerts.
+- `sensor.py`, `button.py`, `number.py`, `select.py`, and `services.py` provide
+  entities, controls, and actions.
+- `tests/` covers the API, status decoding, controls, setup, discovery, and
+  feature behavior.
 
-Connection details are entered during Home Assistant setup. No printer
-address, serial number, password, or access key is stored in this repository.
-The integration branding uses Zebra's [official horizontal logo asset](https://medialibrary.zebra.com/content/experience-fragments/zebra1/us/en/footer/master/_jcr_content/root/container_499331825/container/col1par/image.coreimg.svg/1757099817446/zebra-logo-horizontal.svg)
-for hardware identification. Zebra and the Zebra logo are trademarks of Zebra
-Technologies Corp. This independent integration is not affiliated with or
-endorsed by Zebra Technologies.
+### Set up a development environment
 
-Zebra references: [printer settings](https://docs.zebra.com/us/en/printers/desktop/bm-zd620-and-zd420-desktop-printers-user-guide-ditamap/c-zd620-420-printer-configuration-menus/r-zd620-zd420-ug-settings-menu.html)
-and [resettable counters](https://docs.zebra.com/us/en/printers/software/zpl-pg/c-sgd-commands-from-a-to-d/r-sgd-odometer-user-label-count-12-.html).
+Create and activate a virtual environment:
 
-Copyright (C) 2026 Zebra Printer contributors. Licensed under the
-[GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0-only).
+```console
+python -m venv .venv
+```
+
+Activate it with `source .venv/bin/activate` on Linux or macOS, or
+`.venv\Scripts\Activate.ps1` in PowerShell. Then install the test and lint
+tools and enable the commit hook:
+
+```console
+python -m pip install -r requirements-test.txt -r requirements-lint.txt
+pre-commit install --install-hooks
+```
+
+Install the hook once per clone. It checks staged Python, YAML, and JSON files
+before each commit.
+
+### Run lint and tests
+
+```console
+pre-commit run --all-files
+coverage run --branch --source=custom_components/zebra_printer -m unittest discover -s tests -v
+coverage report --fail-under=100
+```
+
+The test suite uses `unittest`; CI also checks full function coverage. GitHub
+Actions runs these checks along with HACS validation and hassfest on pushes and
+pull requests.
+
+## About this integration
+
+- **Translations:** Home Assistant setup and entity names are available in
+  English in `custom_components/zebra_printer/translations/en.json`.
+- **Privacy:** Connection details are entered during Home Assistant setup. This
+  repository does not store printer addresses, serial numbers, passwords, or
+  access keys.
+- **Branding:** The integration uses Zebra's [official horizontal logo asset](https://medialibrary.zebra.com/content/experience-fragments/zebra1/us/en/footer/master/_jcr_content/root/container_499331825/container/col1par/image.coreimg.svg/1757099817446/zebra-logo-horizontal.svg)
+  to identify the supported hardware. Zebra and the Zebra logo are trademarks
+  of Zebra Technologies Corp. This independent integration is not affiliated
+  with or endorsed by Zebra Technologies.
+- **Zebra references:** [Printer settings](https://docs.zebra.com/us/en/printers/desktop/bm-zd620-and-zd420-desktop-printers-user-guide-ditamap/c-zd620-420-printer-configuration-menus/r-zd620-zd420-ug-settings-menu.html) ·
+  [Resettable counters](https://docs.zebra.com/us/en/printers/software/zpl-pg/c-sgd-commands-from-a-to-d/r-sgd-odometer-user-label-count-12-.html).
+- **License:** Copyright (C) 2026 Zebra Printer contributors. Licensed under
+  the [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0-only).

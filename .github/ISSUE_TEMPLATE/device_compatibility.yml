@@ -1,0 +1,59 @@
+name: Device compatibility report
+description: Report an unlisted Zebra printer model that works with the integration
+title: "[Compatibility]: "
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Use this form to report an unlisted printer model that works without
+        issues. Remove printer addresses, serial numbers, passwords, webhook
+        IDs, and other private information.
+
+  - type: input
+    id: printer_model
+    attributes:
+      label: Printer model
+      placeholder: For example, ZD420
+    validations:
+      required: true
+
+  - type: input
+    id: printer_firmware
+    attributes:
+      label: Printer firmware version
+      placeholder: Leave blank if unknown.
+    validations:
+      required: false
+
+  - type: input
+    id: integration_version
+    attributes:
+      label: Integration version
+      placeholder: For example, 0.4.0
+    validations:
+      required: true
+
+  - type: input
+    id: home_assistant_version
+    attributes:
+      label: Home Assistant version
+      placeholder: For example, 2026.9.0
+    validations:
+      required: true
+
+  - type: textarea
+    id: verified_features
+    attributes:
+      label: What did you verify?
+      description: List the features you used, such as setup, sensors, controls, printing, or alerts.
+      placeholder: Setup, sensors, and ZPL printing all work as expected.
+    validations:
+      required: true
+
+  - type: textarea
+    id: limitations
+    attributes:
+      label: Issues or limitations
+      description: Leave blank if everything you tried works without issues.
+    validations:
+      required: false

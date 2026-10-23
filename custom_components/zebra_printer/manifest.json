@@ -1,13 +1,18 @@
 {
-  "domain": "zebra_printer",
-  "name": "Zebra Printer",
-  "codeowners": ["@Nischay-Pro"],
+  "codeowners": [
+    "@Nischay-Pro"
+  ],
   "config_flow": true,
-  "dependencies": ["network", "webhook"],
+  "dependencies": [
+    "network",
+    "webhook"
+  ],
   "documentation": "https://github.com/Nischay-Pro/ha-zebra",
+  "domain": "zebra_printer",
   "integration_type": "device",
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/Nischay-Pro/ha-zebra/issues",
+  "name": "Zebra Printer",
   "requirements": [],
   "version": "0.4.0"
 }

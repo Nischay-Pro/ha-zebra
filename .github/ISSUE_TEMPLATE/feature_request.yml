@@ -4,8 +4,9 @@ title: "[Feature]: "
 body:
   - type: markdown
     attributes:
-      value: |
-        Search existing issues before opening a new one. Do not include printer IP addresses, serial numbers, passwords, webhook IDs, or other private information.
+      value: >-
+        Search existing issues before opening a new one. Do not include printer IP
+        addresses, serial numbers, passwords, webhook IDs, or other private information.
 
   - type: textarea
     id: problem

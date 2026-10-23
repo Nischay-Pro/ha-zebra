@@ -1,0 +1,44 @@
+{
+  "bypass_actors": [
+    {
+      "actor_id": 5,
+      "actor_type": "RepositoryRole",
+      "bypass_mode": "always"
+    }
+  ],
+  "conditions": {
+    "ref_name": {
+      "exclude": [],
+      "include": [
+        "refs/heads/main"
+      ]
+    }
+  },
+  "enforcement": "active",
+  "name": "Require CI on main",
+  "rules": [
+    {
+      "parameters": {
+        "do_not_enforce_on_create": false,
+        "required_status_checks": [
+          {
+            "context": "lint"
+          },
+          {
+            "context": "tests"
+          },
+          {
+            "context": "hacs"
+          },
+          {
+            "context": "hassfest"
+          }
+        ],
+        "strict_required_status_checks_policy": true
+      },
+      "type": "required_status_checks"
+    }
+  ],
+  "source": "Nischay-Pro/ha-zebra",
+  "target": "branch"
+}
