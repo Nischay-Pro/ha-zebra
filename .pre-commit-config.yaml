@@ -16,4 +16,4 @@ repos:
     hooks:
       - id: check-json
       - id: pretty-format-json
-        args: [--indent=2, --no-ensure-ascii]
+        args: [--indent=2, --no-ensure-ascii, --no-sort-keys]
