@@ -177,3 +177,98 @@ class ZebraClientFailureCoverageTest(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaisesRegex(MODULE.ZebraConnectionError, "was not retried"):
                     await client.send_print_job("^XA^XZ")
             self.assertTrue(writer.closed)
+
+    async def test_printer_control_commands_and_firmware_transfer(self):
+        client = ZebraClient("printer", 9100)
+        for command in ("~PP", "~PS"):
+            writer = _FakeWriter()
+            with patch.object(
+                MODULE.asyncio,
+                "open_connection",
+                new=AsyncMock(return_value=(_FakeReader(), writer)),
+            ):
+                await client.send_printer_control_command(command)
+            self.assertEqual(writer.writes, [(command + "\r\n").encode("ascii")])
+            self.assertTrue(writer.closed)
+
+        firmware = b"Zebra firmware\x00\xff"
+        writer = _FakeWriter(close_error=OSError("close"))
+        with patch.object(
+            MODULE.asyncio,
+            "open_connection",
+            new=AsyncMock(return_value=(_FakeReader(), writer)),
+        ):
+            await client.send_firmware_file(firmware)
+        self.assertEqual(writer.writes, [firmware])
+        self.assertTrue(writer.closed)
+        self.assertFalse(client._connection_lock.locked())
+
+    async def test_pdf_transfer_sends_bytes_unchanged_and_closes_stream(self):
+        client = ZebraClient("printer", 9100)
+        pdf = b"%PDF-1.7\x00label"
+        writer = _FakeWriter(close_error=OSError("close"))
+        with patch.object(
+            MODULE.asyncio,
+            "open_connection",
+            new=AsyncMock(return_value=(_FakeReader(), writer)),
+        ):
+            await client.send_pdf_file(pdf)
+        self.assertEqual(writer.writes, [pdf])
+        self.assertTrue(writer.closed)
+        self.assertFalse(client._connection_lock.locked())
+
+    async def test_pdf_transfer_rejects_empty_and_reports_connection_errors(self):
+        client = ZebraClient("printer", 9100)
+        with self.assertRaisesRegex(MODULE.ZebraConnectionError, "file is empty"):
+            await client.send_pdf_file(b"")
+
+        for failure in (OSError("offline"), asyncio.TimeoutError()):
+            with patch.object(
+                MODULE.asyncio, "open_connection", new=AsyncMock(side_effect=failure)
+            ):
+                with self.assertRaisesRegex(
+                    MODULE.ZebraConnectionError, "Could not connect"
+                ):
+                    await client.send_pdf_file(b"%PDF-1.7")
+            self.assertFalse(client._connection_lock.locked())
+
+        for failure in (OSError("partial transfer"), asyncio.TimeoutError()):
+            writer = _FakeWriter(drain_error=failure)
+            with patch.object(
+                MODULE.asyncio,
+                "open_connection",
+                new=AsyncMock(return_value=(_FakeReader(), writer)),
+            ):
+                with self.assertRaisesRegex(
+                    MODULE.ZebraConnectionError, "was not retried"
+                ):
+                    await client.send_pdf_file(b"%PDF-1.7")
+            self.assertTrue(writer.closed)
+            self.assertFalse(client._connection_lock.locked())
+
+    async def test_firmware_transfer_rejects_empty_and_reports_connection_errors(self):
+        client = ZebraClient("printer", 9100)
+        with self.assertRaisesRegex(MODULE.ZebraConnectionError, "file is empty"):
+            await client.send_firmware_file(b"")
+
+        for failure in (OSError("offline"), asyncio.TimeoutError()):
+            with patch.object(
+                MODULE.asyncio, "open_connection", new=AsyncMock(side_effect=failure)
+            ):
+                with self.assertRaisesRegex(MODULE.ZebraConnectionError, "Could not connect"):
+                    await client.send_firmware_file(b"firmware")
+            self.assertFalse(client._connection_lock.locked())
+
+        for failure in (OSError("partial transfer"), asyncio.TimeoutError()):
+            writer = _FakeWriter(drain_error=failure)
+            with patch.object(
+                MODULE.asyncio,
+                "open_connection",
+                new=AsyncMock(return_value=(_FakeReader(), writer)),
+            ):
+                with self.assertRaisesRegex(
+                    MODULE.ZebraConnectionError, "may be partial"
+                ):
+                    await client.send_firmware_file(b"firmware")
+            self.assertTrue(writer.closed)
+            self.assertFalse(client._connection_lock.locked())

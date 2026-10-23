@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  Monitor a networked Zebra label printer, manage print settings and label counters, and send raw ZPL from Home Assistant.<br>
+  Monitor a networked Zebra label printer, manage print settings and label counters, and send ZPL or PDF labels from Home Assistant.<br>
   The integration connects locally over the printer's raw TCP port using Zebra Set-Get-Do (SGD) commands.
 </p>
 
@@ -45,22 +45,30 @@
 > printer works without issues, [report its model and firmware](https://github.com/Nischay-Pro/ha-zebra/issues/new?template=device_compatibility.yml)
 > so we can consider adding it to this list.
 
-Different models may expose different SGD settings or counters. Print jobs are
-sent as raw ZPL over the local TCP port.
+Different models may expose different SGD settings or counters. ZPL print jobs
+are sent as raw data over the local TCP port. PDF printing requires the
+printer's PDF Direct virtual device.
 
 ## Features
 
 - **Live operating status:** decodes Zebra's pause, error, and warning flags,
   including media/ribbon faults, open printhead, temperature faults, and media
-  calibration warnings. Simultaneous conditions appear as sensor attributes.
+  calibration warnings. Native binary sensors expose pause, media, ribbon,
+  printhead, and general attention states. The flags follow Zebra's
+  [`zpl.system_status` reference](https://docs.zebra.com/content/tcm/us/en/printers/software/zpl-pg/sgd-command-reference/zpl-system_status.html);
+  simultaneous conditions appear as sensor attributes.
 - **Printer statistics:** lifetime and resettable label counts, total media
   fed, estimated media remaining, printhead lifetime usage, firmware, and
   printhead temperature.
 - **Media status:** ribbon cartridge status and remaining length, low-ribbon
   warning threshold, and paper-supply values reported by the printer.
 - **Print controls:** print method, darkness, speed, and media type; resettable
-  counter buttons; media calibration and a one-label test print; and raw ZPL
-  through the `zebra_printer.print` action.
+  counter buttons; media calibration and a one-label test print; raw ZPL through
+  `zebra_printer.print`; and PDF uploads through `zebra_printer.print_pdf`. A
+  switch sends Zebra's documented pause and resume commands.
+- **Manual firmware file transfer:** send a local Zebra firmware file
+  through `zebra_printer.send_firmware_file`. Home Assistant does not download
+  firmware or confirm that the printer installs it.
 - **Home Assistant device:** one device per configured printer, with a link to
   its web configuration page and included icon and logo assets.
 - **Automatic discovery:** searches for Zebra printers when the setup flow
@@ -146,10 +154,16 @@ is reported as successful only after the printer confirms its new value.
 | Ribbon remaining | Remaining cartridge ribbon length in meters |
 | Low ribbon warning | Select the cartridge's warning threshold |
 | Paper supply | Printer-reported media status |
+| Needs attention | On when the printer reports an error or warning |
+| Media out | On when the printer reports media out |
+| Ribbon out | On when the printer reports ribbon out |
+| Printhead open | On when the printer reports the head-open fault |
+| Paused | On when the printer reports its paused state |
+| Pause printing | Switch to pause or resume printing |
 | Print method | Select Direct Thermal or Thermal Transfer |
 | Print darkness | Set darkness from 0.0 to 30.0 |
 | Print speed | Set speed within the ZD420's resolution-specific range |
-| Media type | Select continuous, gap/web, or mark/notch media |
+| Media type | Select a supported media type (ZD420: continuous, gap/web, or mark/notch) |
 | Reset label counter 1 | Set resettable counter 1 to zero |
 | Reset label counter 2 | Set resettable counter 2 to zero |
 | Calibrate media | Run media and ribbon sensor calibration |
@@ -179,7 +193,8 @@ the printer reports those values.
 Use the `zebra_printer.print` action and select one configured Zebra Printer
 device. The `zpl` field accepts raw ZPL text encoded as UTF-8. The integration
 sends it as supplied without checking its size or ZPL syntax. This example
-sends one label:
+sends one label. The action checks the printer mode and refuses to send ZPL
+while PDF Direct is active.
 
 ```yaml
 action: zebra_printer.print
@@ -199,17 +214,96 @@ the printer; check the printer before manually retrying to avoid duplicate
 labels. For non-ASCII text, use a matching Zebra character encoding command
 such as `^CI28` in the ZPL.
 
+### Print a PDF label
+
+Use `zebra_printer.print_pdf` in **Developer tools → Actions**, select the
+printer, and upload a PDF. PDF Direct requires Link-OS 6.3 or newer and must
+already be active. Zebra's [PDF Direct settings](https://docs.zebra.com/content/tcm/us/en/printers/software/zpl-pg/sgd-command-reference/apl-settings.html)
+show how to enable it with `! U1 setvar "apl.enable" "pdf"`. This action does
+not change the printer's virtual device setting and refuses to replace a
+different active virtual device.
+
+The `apl.enable` setting persists on the printer. Changing virtual devices can
+affect normal ZPL printing and may require restarting the printer; see Zebra's
+[virtual device setting reference](https://docs.zebra.com/content/tcm/us/en/printers/software/zpl-pg/sgd-command-reference/apl-enable.html).
+To return to normal ZPL mode, set `apl.enable` to `none` and restart the printer
+if required.
+
+The PDF is sent unchanged, so set its page dimensions to match the loaded label.
+This action does not scale or convert pages, and the printer does not confirm
+that it physically printed the label. It sends the file once without retrying.
+Home Assistant removes the temporary upload after the action reads it; upload a
+fresh file for each print. Raw ZPL remains available through the `print` action
+above.
+
 ### Calibration, test label, and print settings
 
 The **Calibrate media** button runs Zebra's manual calibration for the media
 and ribbon sensors. Calibration can feed media. The **Print test label** button
 sends one small diagnostic label and consumes media.
 
-The print darkness control uses Zebra's 0.0–30.0 range. Print speed is limited
-by the ZD420 printhead resolution: 2–6 ips at 203 dpi and 2–4 ips at 300 dpi.
-The media type selector offers continuous, gap/web, and mark/notch. These
-settings change printer behavior and can affect label quality or feed
-registration; use values appropriate for the loaded media.
+The print darkness control uses Zebra's 0.0–30.0 range. For example, on the
+ZD420, print speed is limited by printhead resolution: 2–6 ips at 203 dpi and
+2–4 ips at 300 dpi. The ZD420 media type selector offers continuous, gap/web,
+and mark/notch. These settings change printer behavior and can affect label
+quality or feed registration; use values appropriate for the loaded media.
+
+### Send a firmware file
+
+The `zebra_printer.send_firmware_file` action sends a local firmware file to a
+configured Zebra printer over the integration's raw TCP connection. Zebra's
+[Send File overview](https://supportcommunity.zebra.com/articles/en_US/Knowledge/ZebraDesigner-Driver-and-the-Send-File-Feature)
+lists firmware as a file type sent as a printer command stream. The action
+forwards file bytes; it does not implement model-specific firmware selection
+or verify that the printer accepted them.
+
+Download the firmware intended for the exact printer model from Zebra. In
+Home Assistant, open **Developer tools → Actions**, select
+`zebra_printer.send_firmware_file`, choose the printer, and upload the file in
+the **Firmware file** field. Home Assistant uploads it from your computer to a
+temporary location for this action.
+
+> ⚠️ **Firmware updates can brick the printer.** Use only firmware from Zebra
+> for the exact printer model. Keep the printer powered while it processes the
+> update. This action cannot validate compatibility, confirm installation, or
+> recover the printer.
+
+The action sends the file bytes unchanged and does not retry. A successful
+call means Home Assistant handed the bytes to its TCP connection; the printer
+does not acknowledge acceptance or completion through this action. For example,
+Zebra's [ZD420 update guide](https://docs.zebra.com/us/en/printers/desktop/bm-zd620-and-zd420-desktop-printers-user-guide-ditamap/c-zd620-420-maintenance/t-zd620-zd420-ug-updating-printer-firmware.html)
+says that after a different firmware version is downloaded, the printer
+restarts and prints a configuration report. Keep power connected while the
+printer processes an update; other models may behave differently. The Firmware
+sensor will show the reported version after the printer reconnects. To check
+the result, note the Firmware sensor before sending and compare it with the
+intended firmware version after the printer returns. If it still reports the
+old version, the action result alone does not prove the update succeeded; check
+the printer's configuration report. If the connection is interrupted, check
+the printer's firmware before sending the file again.
+
+Home Assistant removes the temporary uploaded file when the action reads it.
+Upload a fresh file for each update attempt. The upload field is available in
+Home Assistant's action editor; this integration does not provide a standalone
+dashboard upload card.
+
+For an end-to-end check, use a printer you can recover if the update fails.
+Note its current Firmware sensor value, send a compatible file for a different
+firmware version, then compare the sensor after the printer reconnects. A fake
+TCP printer can verify file transfer behavior, but only a real printer can
+verify firmware installation.
+
+This action does not fetch firmware, choose a version, or verify the file's
+contents. Use only firmware from Zebra for the exact printer model. Zebra's
+ZD420 update process is documented above; other printer models are not
+confirmed as fully supported by this integration.
+
+### Pause and resume printing
+
+Use the **Pause printing** switch on the printer device page. Zebra's `~PP`
+command pauses after the label currently printing finishes; `~PS` resumes a
+paused printer. These commands are also documented in Zebra's [printer control
+command reference](https://docs.zebra.com/us/en/printers/software/zpl-pg/advanced-techniques/printer-control-commands.html).
 
 <p align="center">
   <a href="docs/images/device-controls.png"><img src="docs/images/device-controls.png" alt="Zebra printer print controls in Home Assistant" width="340"></a>
@@ -494,8 +588,8 @@ with Zebra SGD commands; discovery uses UDP broadcast.
   discovery, and stable device identity.
 - `config_flow.py`, `__init__.py`, and `alerts.py` handle setup, entry lifecycle,
   and printer event alerts.
-- `sensor.py`, `button.py`, `number.py`, `select.py`, and `services.py` provide
-  entities, controls, and actions.
+- `sensor.py`, `binary_sensor.py`, `switch.py`, `button.py`, `number.py`,
+  `select.py`, and `services.py` provide entities, controls, and actions.
 - `tests/` covers the API, status decoding, controls, setup, discovery, and
   feature behavior.
 

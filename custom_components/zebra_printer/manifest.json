@@ -6,6 +6,7 @@
   ],
   "config_flow": true,
   "dependencies": [
+    "file_upload",
     "network",
     "webhook"
   ],
@@ -14,5 +15,5 @@
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/Nischay-Pro/ha-zebra/issues",
   "requirements": [],
-  "version": "0.4.0"
+  "version": "0.5.0"
 }

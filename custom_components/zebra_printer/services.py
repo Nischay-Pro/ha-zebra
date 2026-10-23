@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 
 import voluptuous as vol
+from homeassistant.components.file_upload import process_uploaded_file
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import ATTR_DEVICE_ID
 from homeassistant.core import HomeAssistant, ServiceCall, callback
@@ -21,6 +22,12 @@ from .const import (
 
 SERVICE_PRINT = "print"
 ATTR_ZPL = "zpl"
+
+SERVICE_PRINT_PDF = "print_pdf"
+ATTR_PDF_FILE = "pdf_file"
+
+SERVICE_SEND_FIRMWARE_FILE = "send_firmware_file"
+ATTR_FIRMWARE_FILE = "firmware_file"
 
 SERVICE_SET_MEDIA_ROLL = "set_media_roll"
 ATTR_ROLL_LENGTH_INCHES = "roll_length_inches"
@@ -71,11 +78,25 @@ PRINT_SCHEMA = vol.Schema(
     }
 )
 
+PRINT_PDF_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_DEVICE_ID): _one_device_id,
+        vol.Required(ATTR_PDF_FILE): cv.string,
+    }
+)
+
 SET_MEDIA_ROLL_SCHEMA = vol.Schema(
     {
         vol.Required(ATTR_DEVICE_ID): _one_device_id,
         vol.Required(ATTR_ROLL_LENGTH_INCHES): _positive_finite_length,
         vol.Optional(ATTR_REMAINING_LENGTH_INCHES): _nonnegative_finite_length,
+    }
+)
+
+SEND_FIRMWARE_FILE_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_DEVICE_ID): _one_device_id,
+        vol.Required(ATTR_FIRMWARE_FILE): cv.string,
     }
 )
 
@@ -108,6 +129,18 @@ def _get_config_entry(hass: HomeAssistant, device_id: str) -> ConfigEntry:
     if entry.state is not ConfigEntryState.LOADED:
         raise ServiceValidationError("The selected Zebra Printer is not loaded")
     return entry
+
+
+def _read_uploaded_firmware(hass: HomeAssistant, file_id: str) -> bytes:
+    """Read and consume a file uploaded through Home Assistant's file selector."""
+    with process_uploaded_file(hass, file_id) as firmware_path:
+        return firmware_path.read_bytes()
+
+
+def _read_uploaded_pdf(hass: HomeAssistant, file_id: str) -> bytes:
+    """Read and consume a PDF uploaded through Home Assistant's file selector."""
+    with process_uploaded_file(hass, file_id) as pdf_path:
+        return pdf_path.read_bytes()
 
 
 class MediaRollBaselineError(ValueError):
@@ -157,6 +190,21 @@ def async_setup_services(hass: HomeAssistant) -> None:
                 "The selected Zebra Printer is not ready to send print jobs"
             )
         try:
+            active_virtual_device = await coordinator.client.get("apl.enable")
+        except ZebraConnectionError as err:
+            raise HomeAssistantError(
+                f"Could not check the printer's active virtual device: {err}"
+            ) from err
+        if (
+            isinstance(active_virtual_device, str)
+            and active_virtual_device.strip().casefold() == "pdf"
+        ):
+            raise ServiceValidationError(
+                "PDF Direct is active. Disable it with apl.enable=none and "
+                "restart the printer if required before sending ZPL"
+            )
+
+        try:
             await coordinator.client.send_print_job(zpl)
         except ZebraConnectionError as err:
             raise HomeAssistantError(
@@ -192,11 +240,118 @@ def async_setup_services(hass: HomeAssistant) -> None:
         options[CONF_MEDIA_ROLL_REMAINING_INCHES] = remaining
         hass.config_entries.async_update_entry(entry, options=options)
 
+    async def async_print_pdf(call: ServiceCall) -> None:
+        """Send one uploaded PDF when PDF Direct is already active."""
+        entry = _get_config_entry(hass, call.data[ATTR_DEVICE_ID][0])
+        coordinator = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+        if coordinator is None:
+            raise ServiceValidationError(
+                "The selected Zebra Printer is not ready to send PDF labels"
+            )
+
+        if coordinator.file_transfer_lock.locked():
+            raise ServiceValidationError(
+                "A file transfer is already in progress for this printer"
+            )
+        async with coordinator.file_transfer_lock:
+            try:
+                pdf = await hass.async_add_executor_job(
+                    _read_uploaded_pdf,
+                    hass,
+                    call.data[ATTR_PDF_FILE],
+                )
+            except (OSError, ValueError) as err:
+                raise ServiceValidationError(
+                    "The uploaded PDF could not be read or is no longer available"
+                ) from err
+            if not pdf:
+                raise ServiceValidationError("The PDF file is empty")
+            if not pdf.startswith(b"%PDF-"):
+                raise ServiceValidationError(
+                    "The uploaded file does not have a valid PDF signature"
+                )
+
+            try:
+                active_virtual_device = await coordinator.client.get("apl.enable")
+            except ZebraConnectionError as err:
+                raise ServiceValidationError(
+                    "Could not check whether PDF Direct is enabled on the printer"
+                ) from err
+
+            active_virtual_device = (
+                active_virtual_device.strip().casefold()
+                if isinstance(active_virtual_device, str)
+                else None
+            )
+            if active_virtual_device != "pdf":
+                if active_virtual_device in (None, "", "none"):
+                    raise ServiceValidationError(
+                        "PDF Direct is not active. Enable it on the printer with "
+                        'apl.enable="pdf", restart the printer if required, and '
+                        "retry. Changing the virtual device can affect ZPL printing"
+                    )
+                raise ServiceValidationError(
+                    f"Printer virtual device '{active_virtual_device}' is active; "
+                    "refusing to replace it with PDF Direct"
+                )
+
+            try:
+                await coordinator.client.send_pdf_file(pdf)
+            except ZebraConnectionError as err:
+                raise HomeAssistantError(
+                    f"Could not send the PDF file: {err}"
+                ) from err
+
+    async def async_send_firmware_file(call: ServiceCall) -> None:
+        """Send a local Zebra firmware file to a configured printer."""
+        entry = _get_config_entry(hass, call.data[ATTR_DEVICE_ID][0])
+        coordinator = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+        if coordinator is None:
+            raise ServiceValidationError(
+                "The selected Zebra Printer is not ready to send a firmware file"
+            )
+
+        if coordinator.file_transfer_lock.locked():
+            raise ServiceValidationError(
+                "A file transfer is already in progress for this printer"
+            )
+        async with coordinator.file_transfer_lock:
+            try:
+                firmware = await hass.async_add_executor_job(
+                    _read_uploaded_firmware,
+                    hass,
+                    call.data[ATTR_FIRMWARE_FILE],
+                )
+            except (OSError, ValueError) as err:
+                raise ServiceValidationError(
+                    "The uploaded firmware file could not be read or is no longer available"
+                ) from err
+            if not firmware:
+                raise ServiceValidationError("The firmware file is empty")
+            try:
+                await coordinator.client.send_firmware_file(firmware)
+            except ZebraConnectionError as err:
+                raise HomeAssistantError(
+                    f"Could not send the firmware file: {err}"
+                ) from err
+
     hass.services.async_register(
         DOMAIN,
         SERVICE_PRINT,
         async_print,
         schema=PRINT_SCHEMA,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_PRINT_PDF,
+        async_print_pdf,
+        schema=PRINT_PDF_SCHEMA,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_SEND_FIRMWARE_FILE,
+        async_send_firmware_file,
+        schema=SEND_FIRMWARE_FILE_SCHEMA,
     )
     hass.services.async_register(
         DOMAIN,

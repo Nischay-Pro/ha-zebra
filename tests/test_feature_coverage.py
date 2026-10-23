@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 import importlib
 import importlib.util
 from pathlib import Path
 import sys
+import tempfile
 import types
 import unittest
 from types import SimpleNamespace
@@ -33,6 +35,9 @@ def _module(name, *, package=False):
 ha = _module("homeassistant", package=True)
 components = _module("homeassistant.components", package=True)
 helpers = _module("homeassistant.helpers", package=True)
+file_upload_component = _module("homeassistant.components.file_upload")
+components.file_upload = file_upload_component
+file_upload_component.process_uploaded_file = Mock()
 ha_typing = _module("homeassistant.helpers.typing")
 ha_typing.ConfigType = dict
 helpers.typing = ha_typing
@@ -96,7 +101,14 @@ config_entries.ConfigEntry = type("ConfigEntry", (), {})
 const.CONF_HOST = "host"
 const.CONF_PORT = "port"
 const.ATTR_DEVICE_ID = "device_id"
-const.Platform = SimpleNamespace(SENSOR="sensor", SELECT="select", BUTTON="button", NUMBER="number")
+const.Platform = SimpleNamespace(
+    SENSOR="sensor",
+    BINARY_SENSOR="binary_sensor",
+    SELECT="select",
+    BUTTON="button",
+    NUMBER="number",
+    SWITCH="switch",
+)
 const.UnitOfSpeed = SimpleNamespace(INCHES_PER_SECOND="in/s")
 
 core.callback = lambda function: function
@@ -1136,18 +1148,158 @@ class ServicesCoverageTest(unittest.TestCase):
             async_register=lambda domain, name, handler, schema: registered.setdefault(name, handler)
         )
         services_module.async_setup_services(hass)
-        self.assertEqual(set(registered), {services_module.SERVICE_PRINT, services_module.SERVICE_SET_MEDIA_ROLL})
+        self.assertEqual(
+            set(registered),
+            {
+                services_module.SERVICE_PRINT,
+                services_module.SERVICE_PRINT_PDF,
+                services_module.SERVICE_SEND_FIRMWARE_FILE,
+                services_module.SERVICE_SET_MEDIA_ROLL,
+            },
+        )
         call = SimpleNamespace(data={services_module.ATTR_DEVICE_ID: ["device-1"], services_module.ATTR_ZPL: "^XA^XZ"})
         with self.assertRaisesRegex(_ServiceValidationError, "not ready"):
             asyncio.run(registered[services_module.SERVICE_PRINT](call))
 
-        client = SimpleNamespace(send_print_job=AsyncMock())
+        client = SimpleNamespace(
+            get=AsyncMock(return_value="none"), send_print_job=AsyncMock()
+        )
         hass.data[services_module.DOMAIN][entry.entry_id] = SimpleNamespace(client=client)
         asyncio.run(registered[services_module.SERVICE_PRINT](call))
         client.send_print_job.assert_awaited_once_with("^XA^XZ")
+
+        client.get.return_value = " PDF "
+        with self.assertRaisesRegex(_ServiceValidationError, "PDF Direct is active"):
+            asyncio.run(registered[services_module.SERVICE_PRINT](call))
+        client.send_print_job.assert_awaited_once_with("^XA^XZ")
+
+        client.get.side_effect = controls.api_module.ZebraConnectionError("offline")
+        with self.assertRaisesRegex(HomeAssistantError, "Could not check"):
+            asyncio.run(registered[services_module.SERVICE_PRINT](call))
+        client.get.side_effect = None
+        client.get.return_value = "none"
         client.send_print_job.side_effect = controls.api_module.ZebraConnectionError("offline")
         with self.assertRaises(HomeAssistantError):
             asyncio.run(registered[services_module.SERVICE_PRINT](call))
+
+    def test_uploaded_pdf_reader_consumes_temporary_file(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            pdf_path = Path(temp_dir) / "label.pdf"
+            pdf_path.write_bytes(b"%PDF-1.7 label")
+            consumed_uploads = []
+
+            @contextmanager
+            def uploaded_file(_hass, file_id):
+                try:
+                    yield pdf_path
+                finally:
+                    consumed_uploads.append(file_id)
+
+            with patch.object(services_module, "process_uploaded_file", uploaded_file):
+                self.assertEqual(
+                    services_module._read_uploaded_pdf(object(), "upload-id"),
+                    b"%PDF-1.7 label",
+                )
+            self.assertEqual(consumed_uploads, ["upload-id"])
+
+    def test_pdf_action_upload_checks_pdf_direct_and_reports_failures(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            pdf_path = Path(temp_dir) / "label.pdf"
+            pdf_path.write_bytes(b"%PDF-1.7 label")
+            entry = self._entry()
+            hass = self._hass(entry)
+            hass.config = SimpleNamespace(config_dir=temp_dir)
+            hass.data = {services_module.DOMAIN: {}}
+
+            async def run_executor(function, *args):
+                return function(*args)
+
+            hass.async_add_executor_job = run_executor
+            registered = {}
+            hass.services = SimpleNamespace(
+                async_register=lambda _domain, name, handler, schema: registered.setdefault(
+                    name, handler
+                )
+            )
+            services_module.async_setup_services(hass)
+            handler = registered[services_module.SERVICE_PRINT_PDF]
+            call_data = {
+                services_module.ATTR_DEVICE_ID: ["device-1"],
+                services_module.ATTR_PDF_FILE: "upload-id",
+            }
+            call = SimpleNamespace(data=call_data)
+
+            with self.assertRaisesRegex(_ServiceValidationError, "not ready"):
+                asyncio.run(handler(call))
+
+            client = SimpleNamespace(
+                get=AsyncMock(return_value=" PDF "),
+                send_pdf_file=AsyncMock(),
+            )
+            coordinator = SimpleNamespace(
+                client=client, file_transfer_lock=asyncio.Lock()
+            )
+            hass.data[services_module.DOMAIN][entry.entry_id] = coordinator
+
+            @contextmanager
+            def uploaded_file(_hass, file_id):
+                if file_id != "upload-id":
+                    raise ValueError("upload is not available")
+                yield pdf_path
+
+            with patch.object(services_module, "process_uploaded_file", uploaded_file):
+                # PDF Direct is already active, so the PDF is sent unchanged.
+                asyncio.run(handler(call))
+                client.get.assert_awaited_once_with("apl.enable")
+                client.send_pdf_file.assert_awaited_once_with(b"%PDF-1.7 label")
+
+                client.get.return_value = "none"
+                client.send_pdf_file.reset_mock()
+                with self.assertRaisesRegex(_ServiceValidationError, "PDF Direct is not active"):
+                    asyncio.run(handler(call))
+                self.assertFalse(client.send_pdf_file.await_count)
+
+                client.get.return_value = "apl-d"
+                with self.assertRaisesRegex(_ServiceValidationError, "refusing to replace"):
+                    asyncio.run(handler(call))
+
+                client.get.side_effect = ZebraConnectionError("offline")
+                with self.assertRaisesRegex(_ServiceValidationError, "Could not check"):
+                    asyncio.run(handler(call))
+                client.get.side_effect = None
+
+                client.get.return_value = None
+                with self.assertRaisesRegex(_ServiceValidationError, "PDF Direct is not active"):
+                    asyncio.run(handler(call))
+
+                client.get.return_value = "pdf"
+                client.send_pdf_file.side_effect = ZebraConnectionError("offline")
+                with self.assertRaises(HomeAssistantError):
+                    asyncio.run(handler(call))
+                client.send_pdf_file.side_effect = None
+
+                pdf_path.write_bytes(b"")
+                with self.assertRaisesRegex(_ServiceValidationError, "PDF file is empty"):
+                    asyncio.run(handler(call))
+                pdf_path.write_bytes(b"not a PDF")
+                with self.assertRaisesRegex(_ServiceValidationError, "valid PDF signature"):
+                    asyncio.run(handler(call))
+                pdf_path.write_bytes(b"%PDF-1.7 label")
+
+                with patch.object(Path, "read_bytes", side_effect=OSError("unreadable")):
+                    with self.assertRaisesRegex(_ServiceValidationError, "could not be read"):
+                        asyncio.run(handler(call))
+
+                call_data[services_module.ATTR_PDF_FILE] = "missing-upload"
+                with self.assertRaisesRegex(_ServiceValidationError, "no longer available"):
+                    asyncio.run(handler(call))
+
+                call_data[services_module.ATTR_PDF_FILE] = "upload-id"
+                coordinator.file_transfer_lock = asyncio.Lock()
+                asyncio.run(coordinator.file_transfer_lock.acquire())
+                with self.assertRaisesRegex(_ServiceValidationError, "already in progress"):
+                    asyncio.run(handler(call))
+                coordinator.file_transfer_lock.release()
 
     def test_set_media_roll_action_validation_and_option_preservation(self):
         entry = self._entry(options={"alerts_enabled": True, "keep": "yes"})
@@ -1185,6 +1337,107 @@ class ServicesCoverageTest(unittest.TestCase):
             coordinator.data = {"total_print_length": invalid}
             with self.subTest(counter=invalid), self.assertRaisesRegex(_ServiceValidationError, "counter is unavailable"):
                 asyncio.run(handler(call))
+
+    def test_uploaded_firmware_reader_consumes_temporary_file(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            firmware_path = Path(temp_dir) / "firmware.bin"
+            firmware_path.write_bytes(b"firmware bytes")
+            consumed_uploads = []
+
+            @contextmanager
+            def uploaded_file(_hass, file_id):
+                try:
+                    yield firmware_path
+                finally:
+                    consumed_uploads.append(file_id)
+
+            with patch.object(
+                services_module, "process_uploaded_file", uploaded_file
+            ):
+                self.assertEqual(
+                    services_module._read_uploaded_firmware(object(), "upload-id"),
+                    b"firmware bytes",
+                )
+            self.assertEqual(consumed_uploads, ["upload-id"])
+
+    def test_firmware_action_sends_file_and_reports_failures(self):
+        with tempfile.TemporaryDirectory() as config_dir:
+            firmware_path = Path(config_dir) / "firmware.bin"
+            firmware_path.write_bytes(b"firmware bytes")
+            entry = self._entry()
+            hass = self._hass(entry)
+            hass.config = SimpleNamespace(config_dir=config_dir)
+            hass.data = {services_module.DOMAIN: {}}
+            hass.services = SimpleNamespace(
+                async_register=lambda _domain, name, handler, schema: registered.setdefault(
+                    name, handler
+                )
+            )
+
+            async def run_executor(function, *args):
+                return function(*args)
+
+            hass.async_add_executor_job = run_executor
+            registered = {}
+            services_module.async_setup_services(hass)
+            handler = registered[services_module.SERVICE_SEND_FIRMWARE_FILE]
+            call = SimpleNamespace(
+                data={
+                    services_module.ATTR_DEVICE_ID: ["device-1"],
+                    services_module.ATTR_FIRMWARE_FILE: "upload-id",
+                }
+            )
+
+            with self.assertRaisesRegex(_ServiceValidationError, "not ready"):
+                asyncio.run(handler(call))
+
+            client = SimpleNamespace(send_firmware_file=AsyncMock())
+            coordinator = SimpleNamespace(client=client, file_transfer_lock=asyncio.Lock())
+            hass.data[services_module.DOMAIN][entry.entry_id] = coordinator
+
+            @contextmanager
+            def uploaded_file(_hass, file_id):
+                if file_id != "upload-id":
+                    raise ValueError("upload is not available")
+                yield firmware_path
+
+            with patch.object(
+                services_module, "process_uploaded_file", uploaded_file
+            ):
+                asyncio.run(handler(call))
+                client.send_firmware_file.assert_awaited_once_with(b"firmware bytes")
+
+                client.send_firmware_file.reset_mock()
+                client.send_firmware_file.side_effect = ZebraConnectionError("offline")
+                with self.assertRaises(HomeAssistantError):
+                    asyncio.run(handler(call))
+
+                client.send_firmware_file.side_effect = None
+                coordinator.file_transfer_lock = asyncio.Lock()
+                awaitable = coordinator.file_transfer_lock.acquire()
+                asyncio.run(awaitable)
+                with self.assertRaisesRegex(
+                    _ServiceValidationError, "already in progress"
+                ):
+                    asyncio.run(handler(call))
+                coordinator.file_transfer_lock.release()
+
+                coordinator.file_transfer_lock = asyncio.Lock()
+                firmware_path.write_bytes(b"")
+                with self.assertRaisesRegex(_ServiceValidationError, "file is empty"):
+                    asyncio.run(handler(call))
+
+                firmware_path.write_bytes(b"firmware bytes")
+                with patch.object(Path, "read_bytes", side_effect=OSError("unreadable")):
+                    with self.assertRaisesRegex(_ServiceValidationError, "could not be read"):
+                        asyncio.run(handler(call))
+
+                call.data[services_module.ATTR_FIRMWARE_FILE] = "missing-upload"
+                with self.assertRaisesRegex(
+                    _ServiceValidationError, "no longer available"
+                ):
+                    asyncio.run(handler(call))
+
 class ConfigFlowCoverageTest(unittest.TestCase):
     def _flow(self):
         flow = config_flow_module.ZebraPrinterConfigFlow()

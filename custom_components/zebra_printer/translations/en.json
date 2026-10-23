@@ -49,6 +49,23 @@
     }
   },
   "entity": {
+    "binary_sensor": {
+      "head_open": {
+        "name": "Printhead open"
+      },
+      "media_out": {
+        "name": "Media out"
+      },
+      "needs_attention": {
+        "name": "Needs attention"
+      },
+      "paused": {
+        "name": "Paused"
+      },
+      "ribbon_out": {
+        "name": "Ribbon out"
+      }
+    },
     "button": {
       "calibrate_media": {
         "name": "Calibrate media"
@@ -144,6 +161,11 @@
       "total_print_length": {
         "name": "Lifetime media fed"
       }
+    },
+    "switch": {
+      "pause_control": {
+        "name": "Pause printing"
+      }
     }
   },
   "exceptions": {
@@ -155,6 +177,9 @@
     },
     "print_configuration_change_failed": {
       "message": "Could not update the print configuration. Check the printer connection and setting support."
+    },
+    "pause_control_failed": {
+      "message": "Could not send the pause or resume command. Check the printer connection."
     },
     "print_method_change_failed": {
       "message": "Could not change the print method. Check the printer connection and SGD write access."
@@ -240,7 +265,7 @@
   },
   "services": {
     "print": {
-      "description": "Send raw ZPL to one configured Zebra printer. A successful call means the data was handed to the TCP connection; the printer does not confirm that a label was physically printed.",
+      "description": "Send raw ZPL to one configured Zebra printer. The action refuses to send while PDF Direct is active. A successful call means the data was handed to the TCP connection; the printer does not confirm that a label was physically printed.",
       "fields": {
         "zpl": {
           "description": "Raw ZPL text sent as supplied. Add ^CI28 to the ZPL when the printer should interpret UTF-8 text.",
@@ -248,6 +273,26 @@
         }
       },
       "name": "Print label"
+    },
+    "print_pdf": {
+      "description": "Send an uploaded PDF unchanged to one configured Zebra printer. PDF Direct requires Link-OS 6.3 or newer and must already be active. This action does not change the printer's virtual device setting. Match the PDF page size to the loaded label. The printer does not confirm that a label was physically printed.",
+      "fields": {
+        "pdf_file": {
+          "description": "Upload a PDF label from this device. The file is sent unchanged, then the temporary upload is removed; upload it again for another print.",
+          "name": "PDF label"
+        }
+      },
+      "name": "Print PDF label"
+    },
+    "send_firmware_file": {
+      "description": "WARNING: Firmware updates can brick the printer. Use only a Zebra firmware file for the exact printer model. This action sends the uploaded file but cannot verify or recover the firmware. A successful call means Home Assistant handed the file to the TCP connection; the printer does not confirm that it accepted or installed it. After the printer reconnects, compare its Firmware sensor with the intended version.",
+      "fields": {
+        "firmware_file": {
+          "description": "Upload a Zebra firmware file from this device. The temporary upload is removed when the action reads it; upload it again for another attempt.",
+          "name": "Firmware file"
+        }
+      },
+      "name": "Send firmware file"
     },
     "set_media_roll": {
       "description": "Set the installed roll length and establish a fresh estimate baseline. Omit the remaining length for a new full roll.",

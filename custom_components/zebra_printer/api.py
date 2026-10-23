@@ -1,4 +1,4 @@
-"""Zebra client for SGD settings and raw ZPL print jobs over local TCP."""
+"""Zebra client for SGD settings and raw print jobs over local TCP."""
 
 from __future__ import annotations
 
@@ -11,17 +11,38 @@ class ZebraConnectionError(Exception):
 
 
 class ZebraClient:
-    """Exchange SGD commands and raw ZPL print jobs with a Zebra printer."""
+    """Exchange SGD commands and raw print jobs with a Zebra printer."""
 
     def __init__(self, host: str, port: int = 9100) -> None:
         self.host = host
         self.port = port
+        self._connection_lock = asyncio.Lock()
+
+    async def _open_connection(self):
+        """Open the printer socket using the integration's existing policy."""
+        await self._connection_lock.acquire()
+        try:
+            return await asyncio.wait_for(
+                asyncio.open_connection(self.host, self.port), timeout=4
+            )
+        except BaseException:
+            self._connection_lock.release()
+            raise
+
+    async def _close_connection(self, writer) -> None:
+        """Close a printer socket using the integration's existing policy."""
+        try:
+            writer.close()
+            try:
+                await asyncio.wait_for(writer.wait_closed(), timeout=1)
+            except (OSError, asyncio.TimeoutError):
+                pass
+        finally:
+            self._connection_lock.release()
 
     async def _send(self, command: str, *, expect_reply: bool) -> str | None:
         try:
-            reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(self.host, self.port), timeout=4
-            )
+            reader, writer = await self._open_connection()
             try:
                 writer.write((command + "\r\n").encode("ascii"))
                 await asyncio.wait_for(writer.drain(), timeout=4)
@@ -41,11 +62,7 @@ class ZebraClient:
                 raw = await asyncio.wait_for(reader.readuntil(b'"'), timeout=4)
                 return raw[:-1].decode("ascii", errors="replace").strip()
             finally:
-                writer.close()
-                try:
-                    await asyncio.wait_for(writer.wait_closed(), timeout=1)
-                except (OSError, asyncio.TimeoutError):
-                    pass
+                await self._close_connection(writer)
         except ZebraConnectionError:
             raise
         except asyncio.IncompleteReadError as err:
@@ -64,9 +81,7 @@ class ZebraClient:
         payload = zpl.encode("utf-8")
 
         try:
-            _, writer = await asyncio.wait_for(
-                asyncio.open_connection(self.host, self.port), timeout=4
-            )
+            _, writer = await self._open_connection()
         except (OSError, asyncio.TimeoutError) as err:
             raise ZebraConnectionError(
                 f"Could not connect to printer at {self.host}:{self.port}: {err}"
@@ -81,13 +96,63 @@ class ZebraClient:
                 "the printer and was not retried."
             ) from err
         finally:
-            writer.close()
-            try:
-                await asyncio.wait_for(writer.wait_closed(), timeout=1)
-            except (OSError, asyncio.TimeoutError):
-                # Once drain succeeds, a close error does not establish whether
-                # the printer printed the job. Never turn it into a retry.
-                pass
+            # Once drain succeeds, a close error does not establish whether
+            # the printer printed the job. Never turn it into a retry.
+            await self._close_connection(writer)
+
+    async def send_pdf_file(self, pdf: bytes) -> None:
+        """Send a PDF unchanged for the printer's PDF Direct virtual device."""
+        if not pdf:
+            raise ZebraConnectionError("The PDF file is empty")
+
+        try:
+            _, writer = await self._open_connection()
+        except (OSError, asyncio.TimeoutError) as err:
+            raise ZebraConnectionError(
+                f"Could not connect to printer at {self.host}:{self.port}: {err}"
+            ) from err
+
+        try:
+            writer.write(pdf)
+            await asyncio.wait_for(writer.drain(), timeout=4)
+        except (OSError, asyncio.TimeoutError) as err:
+            raise ZebraConnectionError(
+                "Could not confirm PDF transmission. The job may have reached "
+                "the printer and was not retried."
+            ) from err
+        finally:
+            # A close error cannot establish whether the printer printed the job.
+            await self._close_connection(writer)
+
+    async def send_printer_control_command(self, command: str) -> None:
+        """Send a Zebra printer-control command without waiting for a reply."""
+        await self._send(command, expect_reply=False)
+
+    async def send_firmware_file(self, firmware: bytes) -> None:
+        """Send the contents of a firmware file unchanged over raw TCP."""
+        if not firmware:
+            raise ZebraConnectionError("The firmware file is empty")
+
+        try:
+            _, writer = await self._open_connection()
+        except (OSError, asyncio.TimeoutError) as err:
+            raise ZebraConnectionError(
+                f"Could not connect to printer at {self.host}:{self.port}: {err}"
+            ) from err
+
+        try:
+            writer.write(firmware)
+            await asyncio.wait_for(writer.drain(), timeout=4)
+        except (OSError, asyncio.TimeoutError) as err:
+            raise ZebraConnectionError(
+                "Could not hand the complete firmware file to the network "
+                "connection. The transfer may be partial; check the printer "
+                "before sending the file again."
+            ) from err
+        finally:
+            # A close error cannot establish whether the printer received
+            # the complete file, so this operation is never retried.
+            await self._close_connection(writer)
 
     async def send_sgd_command(self, command: str) -> None:
         """Send one SGD command without waiting for a response."""

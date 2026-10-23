@@ -1,4 +1,8 @@
 print:
+  description: >-
+    Send raw ZPL text to one configured Zebra printer. A successful call means
+    the data was handed to the TCP connection; the printer does not confirm
+    that a label was physically printed.
   fields:
     device_id:
       required: true
@@ -14,6 +18,41 @@ print:
       selector:
         text:
           multiline: true
+print_pdf:
+  description: >-
+    Send an uploaded PDF unchanged to one configured Zebra printer. The printer
+    must support and already have PDF Direct enabled. This action does not
+    change the printer's virtual device setting. Match the PDF page size to the
+    loaded label. The printer does not confirm that a label was physically
+    printed.
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: zebra_printer
+    pdf_file:
+      required: true
+      selector:
+        file:
+          accept: application/pdf
+send_firmware_file:
+  description: >-
+    WARNING: Firmware updates can brick the printer. Use only a Zebra firmware
+    file for the exact printer model. The action sends the file but cannot
+    verify or recover the firmware. After the printer reconnects, compare its
+    Firmware sensor with the intended version.
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: zebra_printer
+    firmware_file:
+      required: true
+      selector:
+        file:
+          accept: "*/*"
 set_media_roll:
   fields:
     device_id:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 import re
@@ -39,7 +40,14 @@ from .identity import async_migrate_config_entry_identity, config_entry_unique_i
 from .services import async_setup_services
 
 _LOGGER = logging.getLogger(__name__)
-PLATFORMS = [Platform.SENSOR, Platform.SELECT, Platform.BUTTON, Platform.NUMBER]
+PLATFORMS = [
+    Platform.SENSOR,
+    Platform.BINARY_SENSOR,
+    Platform.SELECT,
+    Platform.BUTTON,
+    Platform.NUMBER,
+    Platform.SWITCH,
+]
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 PRINTHEAD_USAGE_VARIABLE = "device.printhead.odometer"
@@ -82,6 +90,7 @@ class ZebraCoordinator(DataUpdateCoordinator[dict[str, object]]):
         self.client = client
         self.last_communication_error: str | None = None
         self.alert_configuration: ZebraAlertConfiguration | None = None
+        self.file_transfer_lock = asyncio.Lock()
 
     async def _async_read_variable(
         self,

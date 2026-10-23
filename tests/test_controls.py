@@ -31,8 +31,10 @@ def _install_homeassistant_stubs():
     core = _module("homeassistant.core")
     exceptions = _module("homeassistant.exceptions")
     button = _module("homeassistant.components.button")
+    binary_sensor = _module("homeassistant.components.binary_sensor")
     select = _module("homeassistant.components.select")
     sensor = _module("homeassistant.components.sensor")
+    switch = _module("homeassistant.components.switch")
     entity = _module("homeassistant.helpers.entity")
     entity_platform = _module("homeassistant.helpers.entity_platform")
     update_coordinator = _module("homeassistant.helpers.update_coordinator")
@@ -68,12 +70,15 @@ def _install_homeassistant_stubs():
     core.HomeAssistant = type("HomeAssistant", (), {})
     exceptions.HomeAssistantError = HomeAssistantError
     button.ButtonEntity = type("ButtonEntity", (), {})
+    binary_sensor.BinarySensorDeviceClass = SimpleNamespace(PROBLEM="problem")
+    binary_sensor.BinarySensorEntity = type("BinarySensorEntity", (), {})
     select.SelectEntity = type("SelectEntity", (), {})
     sensor.SensorDeviceClass = SimpleNamespace(TEMPERATURE="temperature")
     sensor.SensorEntity = type("SensorEntity", (), {})
     sensor.SensorStateClass = SimpleNamespace(
         TOTAL_INCREASING="total_increasing", MEASUREMENT="measurement"
     )
+    switch.SwitchEntity = type("SwitchEntity", (), {})
     entity.DeviceInfo = lambda **kwargs: kwargs
     entity_platform.AddConfigEntryEntitiesCallback = object
     update_coordinator.CoordinatorEntity = CoordinatorEntity
@@ -88,18 +93,22 @@ def _install_homeassistant_stubs():
 
 HomeAssistantError = _install_homeassistant_stubs()
 button_module = importlib.import_module("custom_components.zebra_printer.button")
+binary_sensor_module = importlib.import_module("custom_components.zebra_printer.binary_sensor")
 select_module = importlib.import_module("custom_components.zebra_printer.select")
 api_module = importlib.import_module("custom_components.zebra_printer.api")
 sensor_module = importlib.import_module("custom_components.zebra_printer.sensor")
+switch_module = importlib.import_module("custom_components.zebra_printer.switch")
 const_module = importlib.import_module("custom_components.zebra_printer.const")
 
 
 class FakeClient:
-    def __init__(self, values=None, *, fail_write=False):
+    def __init__(self, values=None, *, fail_write=False, fail_control=False):
         self.values = values or {}
         self.fail_write = fail_write
+        self.fail_control = fail_control
         self.get_calls = []
         self.set_calls = []
+        self.control_commands = []
 
     async def get(self, variable):
         self.get_calls.append(variable)
@@ -110,6 +119,11 @@ class FakeClient:
         if self.fail_write:
             raise api_module.ZebraConnectionError("write failed")
         self.values[variable] = value
+
+    async def send_printer_control_command(self, command):
+        self.control_commands.append(command)
+        if self.fail_control:
+            raise api_module.ZebraConnectionError("control failed")
 
 
 class FakeCoordinator:
@@ -160,6 +174,65 @@ class ZebraSensorAvailabilityTest(unittest.TestCase):
         sensor = sensor_module.ZebraSensor(coordinator, _entry(), "printhead_usage")
 
         self.assertFalse(sensor.available)
+
+
+class ZebraStatusBinarySensorTest(unittest.IsolatedAsyncioTestCase):
+    async def test_setup_status_sensors_and_condition_mapping(self):
+        coordinator = FakeCoordinator(
+            {
+                "model": "ZD420",
+                "operating_status": "Media out",
+                "status_paused": True,
+                "status_errors": ["Media out", "Head open"],
+                "status_warnings": ["Clean printhead"],
+            }
+        )
+        hass = SimpleNamespace(data={const_module.DOMAIN: {_entry().entry_id: coordinator}})
+        created = []
+
+        await binary_sensor_module.async_setup_entry(hass, _entry(), created.extend)
+
+        sensors = {entity.key: entity for entity in created}
+        self.assertEqual(set(sensors), set(binary_sensor_module.SENSORS))
+        self.assertTrue(sensors["needs_attention"].is_on)
+        self.assertTrue(sensors["media_out"].is_on)
+        self.assertFalse(sensors["ribbon_out"].is_on)
+        self.assertTrue(sensors["head_open"].is_on)
+        self.assertTrue(sensors["paused"].is_on)
+        self.assertTrue(sensors["media_out"].available)
+
+        coordinator.data["status_errors"] = []
+        coordinator.data["status_warnings"] = []
+        coordinator.data["status_paused"] = False
+        self.assertFalse(sensors["needs_attention"].is_on)
+        self.assertFalse(sensors["paused"].is_on)
+
+    def test_invalid_status_data_makes_entities_unavailable_and_safe(self):
+        coordinator = FakeCoordinator(
+            {
+                "model": "ZD420",
+                "operating_status": None,
+                "status_paused": None,
+                "status_errors": None,
+                "status_warnings": [],
+            }
+        )
+        sensors = {
+            key: binary_sensor_module.ZebraStatusBinarySensor(
+                coordinator, _entry(), key
+            )
+            for key in binary_sensor_module.SENSORS
+        }
+        self.assertTrue(all(not sensor.available for sensor in sensors.values()))
+        self.assertFalse(sensors["needs_attention"].is_on)
+        self.assertFalse(sensors["media_out"].is_on)
+        self.assertFalse(sensors["paused"].is_on)
+
+        coordinator.data["operating_status"] = "Ready"
+        coordinator.data["status_paused"] = False
+        coordinator.data["status_errors"] = []
+        coordinator.data["status_warnings"] = ["Clean printhead"]
+        self.assertTrue(sensors["needs_attention"].is_on)
 
 
 class ZebraControlsTest(unittest.IsolatedAsyncioTestCase):
@@ -273,6 +346,45 @@ class ZebraControlsTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(coordinator.refresh_count, 0)
 
+    async def test_pause_switch_commands_are_not_suppressed_by_cached_state(self):
+        client = FakeClient()
+        coordinator = FakeCoordinator({"model": "ZD420", "status_paused": False}, client)
+        hass = SimpleNamespace(data={const_module.DOMAIN: {_entry().entry_id: coordinator}})
+        created = []
+        await switch_module.async_setup_entry(hass, _entry(), created.extend)
+        self.assertEqual(len(created), 1)
+        self.assertIsInstance(created[0], switch_module.ZebraPrintingPausedSwitch)
+        entity = switch_module.ZebraPrintingPausedSwitch(coordinator, _entry())
+
+        self.assertTrue(entity.available)
+        self.assertFalse(entity.is_on)
+        await entity.async_turn_off()
+        self.assertEqual(client.control_commands, ["~PS"])
+        self.assertEqual(coordinator.refresh_count, 1)
+        await entity.async_turn_on()
+        self.assertEqual(client.control_commands, ["~PS", "~PP"])
+        self.assertEqual(coordinator.refresh_count, 2)
+
+        coordinator.data["status_paused"] = True
+        self.assertTrue(entity.is_on)
+        await entity.async_turn_on()
+        await entity.async_turn_off()
+        self.assertEqual(client.control_commands, ["~PS", "~PP", "~PP", "~PS"])
+        self.assertEqual(coordinator.refresh_count, 4)
+
+    async def test_pause_switch_availability_and_command_failure(self):
+        coordinator = FakeCoordinator({"model": "ZD420", "status_paused": None})
+        entity = switch_module.ZebraPrintingPausedSwitch(coordinator, _entry())
+        self.assertFalse(entity.available)
+        self.assertFalse(entity.is_on)
+
+        coordinator.data["status_paused"] = False
+        coordinator.client = FakeClient(fail_control=True)
+        with self.assertRaises(HomeAssistantError) as raised:
+            await entity.async_turn_on()
+        self.assertEqual(raised.exception.translation_key, "pause_control_failed")
+        self.assertEqual(coordinator.refresh_count, 0)
+
 
 class EnglishTranslationCatalogTest(unittest.TestCase):
     @classmethod
@@ -295,6 +407,10 @@ class EnglishTranslationCatalogTest(unittest.TestCase):
             },
             "select": {"print_method"},
             "button": {"reset_counter_1", "reset_counter_2"},
+            "binary_sensor": {
+                "needs_attention", "media_out", "ribbon_out", "head_open", "paused"
+            },
+            "switch": {"pause_control"},
         }
         entities = self.translation["entity"]
         for platform, translation_keys in expected.items():
@@ -310,6 +426,7 @@ class EnglishTranslationCatalogTest(unittest.TestCase):
             "print_method_change_failed",
             "ribbon_required",
             "unsupported_print_method",
+            "pause_control_failed",
         ):
             with self.subTest(exception=key):
                 self.assertTrue(self.translation["exceptions"][key]["message"])
