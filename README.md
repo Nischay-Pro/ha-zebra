@@ -1,12 +1,12 @@
 # Zebra Printer for Home Assistant
 
-Monitor a networked Zebra label printer, manage its print method and
-resettable label counters, and send raw ZPL label jobs from Home Assistant. The
-integration connects locally using Zebra Set-Get-Do (SGD) commands over the
-printer's raw TCP print port.
+<p align="center">
+  <img src="custom_components/zebra_printer/brand/zebra-logo-horizontal.svg" alt="Zebra Technologies" width="300">
+</p>
 
 <p align="center">
-  <img src="custom_components/zebra_printer/brand/zebra-logo-horizontal.svg" alt="Zebra Technologies" width="360">
+  Monitor a networked Zebra label printer, manage print settings and label counters, and send raw ZPL from Home Assistant.<br>
+  The integration connects locally over the printer's raw TCP port using Zebra Set-Get-Do (SGD) commands.
 </p>
 
 <p align="center">
@@ -15,9 +15,32 @@ printer's raw TCP print port.
   </a>
 </p>
 
-> [!NOTE]
-> Tested with a Zebra ZD420. Other Zebra models may expose different SGD
-> settings or counters. Print jobs are sent as raw ZPL over the local TCP port.
+<p align="center">
+  <strong>Quick start</strong><br>
+  <a href="#1-installation">Installation</a> ·
+  <a href="#2-getting-started">Setup</a> ·
+  <a href="#supported-devices">Supported devices</a> ·
+  <a href="#3-entities">Entities</a> ·
+  <a href="#4-printing-labels">Printing</a>
+</p>
+
+<p align="center">
+  <strong>Reference</strong><br>
+  <a href="#5-media-roll-estimate">Media roll estimate</a> ·
+  <a href="#6-dashboard-controls">Dashboard controls</a> ·
+  <a href="#7-printer-event-alerts">Printer alerts</a> ·
+  <a href="#8-troubleshooting">Troubleshooting</a> ·
+  <a href="#9-development">Development</a>
+</p>
+
+## Supported devices
+
+| Manufacturer | Model | Supported | Notes |
+| --- | --- | :---: | --- |
+| Zebra | ZD420 | ✅ | Fully supported |
+
+Other Zebra models may expose different SGD settings or counters. Print jobs
+are sent as raw ZPL over the local TCP port.
 
 ## Features
 
@@ -42,8 +65,9 @@ printer's raw TCP print port.
   local-only Home Assistant webhook when the printer reports HTTP-POST alert
   support.
 
-The lifetime label count cannot be reset; each reset button affects only its
-matching resettable counter.
+> [!NOTE]
+> The lifetime label count cannot be reset; each reset button affects only its
+> matching resettable counter.
 
 ## 1. Installation
 
@@ -125,11 +149,24 @@ is reported as successful only after the printer confirms its new value.
 | Calibrate media | Run media and ribbon sensor calibration |
 | Print test label | Print one diagnostic label |
 
+<p align="center">
+  <a href="docs/images/device-sensors.png"><img src="docs/images/device-sensors.png" alt="Zebra printer sensor entities in Home Assistant" width="340"></a>
+</p>
+<p align="center"><em>Live printer readings appear in the Sensors card.</em></p>
+
 Thermal Transfer selection requires the printer to report an inserted ribbon
 cartridge. Use appropriate thermal-transfer media as well. Each reset button
 changes only its corresponding resettable counter; neither affects lifetime
 labels or the other resettable counter. Optional controls become available
 when their printer readings support them.
+
+Firmware and printhead lifetime usage appear in a separate Diagnostic card when
+the printer reports those values.
+
+<p align="center">
+  <a href="docs/images/device-diagnostics.png"><img src="docs/images/device-diagnostics.png" alt="Zebra printer diagnostics in Home Assistant" width="340"></a>
+</p>
+<p align="center"><em>The Diagnostic card shows firmware and printhead usage when available.</em></p>
 
 ## 4. Printing labels
 
@@ -168,14 +205,30 @@ The media type selector offers continuous, gap/web, and mark/notch. These
 settings change printer behavior and can affect label quality or feed
 registration; use values appropriate for the loaded media.
 
+<p align="center">
+  <a href="docs/images/device-controls.png"><img src="docs/images/device-controls.png" alt="Zebra printer print controls in Home Assistant" width="340"></a>
+</p>
+<p align="center"><em>Print settings, calibration, test printing, and counter resets are available on the device page.</em></p>
+
 ## 5. Media roll estimate
 
 After loading a roll, open **Settings → Devices & services**, select the Zebra
-Printer entry, choose **Configure**, then **Set media roll estimate**. Enter the
-roll's full nominal length in inches. Leave the remaining length blank for a
-new full roll; for a partly used roll, enter the estimated media remaining.
-Saving refreshes the printer's lifetime media-fed counter and uses that reading
-as the new estimate baseline.
+Printer entry, choose **Configure**, then **Set media roll estimate**.
+
+<p align="center">
+  <a href="docs/images/printer-settings.png"><img src="docs/images/printer-settings.png" alt="Printer settings menu with media roll estimate and event alert options" width="380"></a>
+</p>
+<p align="center"><em>Open this menu to configure a media estimate or printer event alerts.</em></p>
+
+Enter the roll's full nominal length in inches. Leave the remaining length
+blank for a new full roll; for a partly used roll, enter the estimated media
+remaining. Saving refreshes the printer's lifetime media-fed counter and uses
+that reading as the new estimate baseline.
+
+<p align="center">
+  <a href="docs/images/media-roll-estimate.png"><img src="docs/images/media-roll-estimate.png" alt="Set a media roll estimate in Home Assistant" width="380"></a>
+</p>
+<p align="center"><em>Enter the roll's nominal length and, for a partly used roll, its remaining length.</em></p>
 
 The `zebra_printer.set_media_roll` action is also available for automations:
 
@@ -239,8 +292,14 @@ does not show a confirmation.
 Printer-originated alerts are disabled by default. Open the Zebra Printer
 config entry and choose **Configure** to enable them. Select the conditions to
 forward and enter an HTTP base URL that the printer can reach, such as
-`http://192.168.1.10:8123`. Home Assistant appends its webhook path and creates
-a secret webhook ID. The webhook accepts local-network POST requests only.
+`http://192.168.1.10:8123`. The integration generates a webhook ID with Home
+Assistant and builds the callback URL by appending Home Assistant's webhook
+path. The webhook accepts local-network POST requests only.
+
+<p align="center">
+  <a href="docs/images/printer-event-alerts.png"><img src="docs/images/printer-event-alerts.png" alt="Configure local Zebra printer alerts in Home Assistant" width="380"></a>
+</p>
+<p align="center"><em>Choose a reachable Home Assistant URL and the printer conditions to forward.</em></p>
 
 The setup checks that the printer reports both the selected conditions through
 `alerts.conditions` and the `HTTP-POST` destination through
@@ -276,10 +335,11 @@ Zebra references: [HTTP POST alert payload](https://docs.zebra.com/us/en/printer
 
 ## 9. Development
 
-The integration uses Python's standard library and Home Assistant's native
-entity and polling APIs. Run `python -m unittest discover -s tests -v` to
-test the SGD client. GitHub Actions are configured to run those tests, HACS
-validation, and hassfest when changes are pushed.
+The integration uses Home Assistant's native entity and polling APIs. The test
+suite covers the SGD client, status decoding, controls, and feature behavior;
+run it with `python -m unittest discover -s tests -v`. GitHub Actions run the
+test and coverage checks, Ruff lint, HACS validation, and hassfest on pushes
+and pull requests.
 
 Home Assistant setup and entity names are currently available in English via
 `custom_components/zebra_printer/translations/en.json`.
