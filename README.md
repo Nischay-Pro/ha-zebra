@@ -29,6 +29,7 @@
   <a href="#5-media-roll-estimate">Media roll estimate</a> ·
   <a href="#6-dashboard-controls">Dashboard controls</a> ·
   <a href="#7-printer-event-alerts">Printer alerts</a> ·
+  <a href="#example-automations">Automation examples</a> ·
   <a href="#8-troubleshooting">Troubleshooting</a> ·
   <a href="#9-development">Development</a> ·
   <a href="#about-this-integration">About</a>
@@ -327,6 +328,151 @@ does not retain failed cleanup data for an automatic retry; remove a stale rule
 through the printer configuration after reconnecting.
 
 Zebra references: [HTTP POST alert payload](https://docs.zebra.com/us/en/printers/software/zpl-pg/http-post-alerts/configuring-alerts-where-the-alert-destination-is-http-post.html), [alerts.add and rule removal](https://docs.zebra.com/content/tcm/us/en/printers/software/zpl-pg/sgd-command-reference/alerts-add.html), and [available alert conditions](https://docs.zebra.com/content/tcm/us/en/printers/software/zpl-pg/sgd-command-reference/alerts-conditions.html).
+
+## Example automations
+
+Replace `notify.mobile_app_your_phone` and any example entity or device IDs
+with the names from your Home Assistant instance.
+
+### Notify when the printer reports that paper is out
+
+Enable printer event alerts in the integration options and select **PAPER OUT**.
+This automation uses the printer alert event and its reported message:
+
+```yaml
+alias: Notify when the Zebra printer runs out of paper
+triggers:
+  - trigger: event
+    event_type: zebra_printer_alert
+    event_data:
+      condition: PAPER OUT
+actions:
+  - action: notify.mobile_app_your_phone
+    data:
+      title: Zebra printer
+      message: "{{ trigger.event.data.message }}"
+mode: queued
+```
+
+### Notify when the media roll is low
+
+Configure the media roll estimate first. This example notifies when the
+estimated remaining length crosses below 100 inches. Replace the entity ID if
+Home Assistant assigned a different one:
+
+```yaml
+alias: Notify when Zebra media is low
+triggers:
+  - trigger: numeric_state
+    entity_id: sensor.zebra_zd420_estimated_media_remaining
+    below: 100
+actions:
+  - action: notify.mobile_app_your_phone
+    data:
+      title: Zebra printer
+      message: >-
+        About {{ states('sensor.zebra_zd420_estimated_media_remaining') }} in
+        of media remain.
+mode: single
+```
+
+### Print a label when a helper is pressed
+
+Create an Input button helper named `print_pickup_label` (or change the entity
+ID below). Replace `YOUR_ZEBRA_DEVICE_ID` with the printer's device ID:
+
+```yaml
+alias: Print a pickup label
+triggers:
+  - trigger: state
+    entity_id: input_button.print_pickup_label
+actions:
+  - action: zebra_printer.print
+    data:
+      device_id: YOUR_ZEBRA_DEVICE_ID
+      zpl: |-
+        ^XA
+        ^FO40,40^A0N,36,36^FDPackage ready for pickup^FS
+        ^XZ
+mode: single
+```
+
+The print action sends the ZPL once; it does not confirm that a label was
+physically printed. See [Printing labels](#4-printing-labels) before adding
+automatic retries, since an interrupted connection may still have delivered
+some or all of a job.
+
+### Notify about ribbon or printhead alerts
+
+Enable printer event alerts and select the conditions supported by your
+printer. This automation sends one notification for any of the three selected
+conditions:
+
+```yaml
+alias: Notify about Zebra ribbon or printhead issues
+triggers:
+  - trigger: event
+    event_type: zebra_printer_alert
+    event_data:
+      condition: RIBBON LOW
+  - trigger: event
+    event_type: zebra_printer_alert
+    event_data:
+      condition: RIBBON OUT
+  - trigger: event
+    event_type: zebra_printer_alert
+    event_data:
+      condition: HEAD OPEN
+actions:
+  - action: notify.mobile_app_your_phone
+    data:
+      title: Zebra printer alert
+      message: "{{ trigger.event.data.message }}"
+mode: queued
+```
+
+### Set the media estimate after loading a new roll
+
+Create an Input button helper named `new_zebra_roll_loaded`. Press it after
+loading a new, full roll to save a fresh estimate baseline. Change the roll
+length and device ID to match your printer and media:
+
+```yaml
+alias: Set Zebra media estimate for a new roll
+triggers:
+  - trigger: state
+    entity_id: input_button.new_zebra_roll_loaded
+actions:
+  - action: zebra_printer.set_media_roll
+    data:
+      device_id: YOUR_ZEBRA_DEVICE_ID
+      roll_length_inches: 1000
+mode: single
+```
+
+For a partly used roll, include `remaining_length_inches` with its estimated
+remaining length.
+
+### Reset a batch counter with a helper
+
+Create an Input button helper named `reset_zebra_batch_counter` and replace
+the entity IDs if Home Assistant assigned different ones. This example resets
+counter 1; use the counter 2 button entity to reset counter 2 instead:
+
+```yaml
+alias: Reset Zebra batch counter
+triggers:
+  - trigger: state
+    entity_id: input_button.reset_zebra_batch_counter
+actions:
+  - action: button.press
+    target:
+      entity_id: button.zebra_zd420_reset_label_counter_1
+mode: single
+```
+
+This changes only the selected resettable counter. The lifetime label count is
+not affected.
 
 ## 8. Troubleshooting
 
