@@ -1,0 +1,43 @@
+name: Feature request
+description: Suggest an improvement or support for another Zebra printer
+title: "[Feature]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Search existing issues before opening a new one. Do not include printer IP addresses, serial numbers, passwords, webhook IDs, or other private information.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What would you like to do?
+      description: Describe the problem or use case this feature would address.
+      placeholder: I would like to...
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like the integration to do?
+      description: Describe your preferred solution. Include an alternative if you have one.
+      placeholder: It would help if the integration...
+    validations:
+      required: false
+
+  - type: input
+    id: printer_model
+    attributes:
+      label: Printer model
+      description: Include the model if this request is printer-specific.
+      placeholder: For example, ZD420
+    validations:
+      required: false
+
+  - type: input
+    id: printer_firmware
+    attributes:
+      label: Printer firmware version
+      placeholder: Leave blank if unknown.
+    validations:
+      required: false
